@@ -1,0 +1,50 @@
+name: contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.9 is the declared floor; 3.13 is current.
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: selftest (every mutation trips its check)
+        run: python3 scripts/assert-agent-workflow.py --selftest
+
+      - name: gotcha index <-> docs/gotchas parity
+        run: python3 scripts/assert-agent-workflow.py
+
+      - name: symlinks are committed as symlinks (mode 120000)
+        run: |
+          bad=0
+          for p in .claude/skills .opencode/skills .cursor/skills CLAUDE.md; do
+            mode="$(git ls-files -s -- "$p" | awk '{print $1}')"
+            if [ "$mode" != "120000" ]; then
+              echo "::error::$p is tracked with mode ${mode:-<untracked>}, expected 120000 (symlink)"
+              bad=1
+            fi
+          done
+          exit "$bad"
+
+      - name: install.sh is idempotent into a fresh repo
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git init -q "$tmp"
+          bash scripts/install.sh "$tmp" --tools claude,opencode,cursor,codex
+          bash scripts/install.sh "$tmp" --tools claude,opencode,cursor,codex
+          (cd "$tmp" && python3 scripts/assert-agent-workflow.py)

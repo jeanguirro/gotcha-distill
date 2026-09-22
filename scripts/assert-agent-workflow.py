@@ -20,12 +20,19 @@ docs/gotchas/ are lazy-loaded. This script asserts they cannot drift apart:
      while backfilling a legacy repository).
  10. Every copy of the skill's SKILL.md has the right name and a single-line
      description within budget, and all copies are byte-identical.
+ 11. Every domain file opens with front matter carrying `domain`, `triggers`
+     and a YYYY-MM-DD `updated` date. scripts/gen-llms-txt.py reads it, so a
+     missing header is a file the generated index cannot describe.
 
 Exit 0 when the contract holds, 1 with one line per violation otherwise.
 `--selftest` builds a synthetic fixture, asserts it is clean, then applies
 named mutations and asserts each one trips its check.
 
-Stdlib only. Python 3.9+.
+Paths, the index heading and the skill name can be overridden in gotcha.toml
+at the repository root; every key is optional and defaults to the layout this
+repository uses, so a repo without the file behaves exactly as before.
+
+Stdlib only. Python 3.11+ (tomllib).
 """
 
 from __future__ import annotations
@@ -35,6 +42,8 @@ import re
 import shutil
 import sys
 import tempfile
+import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -56,6 +65,48 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # description + when_to_use at 1,536 characters).
 SKILL_DESC_MAX_CHARS = 512
 SKILL_SEARCH_DIRS = (".agents/skills", ".claude/skills", ".opencode/skills", ".cursor/skills")
+FRONTMATTER_KEYS = ("domain", "triggers", "updated")
+CONFIG_FILE = "gotcha.toml"
+
+
+@dataclass(frozen=True)
+class Config:
+    """Layout of the repository being checked. Defaults are this repo's layout."""
+
+    name: str = ""  # empty means "use the directory name"
+    contract: str = "AGENTS.md"
+    gotchas: str = str(GOTCHAS_DIR)
+    postmortems: str = "docs/postmortems"
+    heading: str = SECTION_PREFIX
+    skill_name: str = SKILL_NAME
+    description_max_chars: int = SKILL_DESC_MAX_CHARS
+
+    @property
+    def postmortem_ref_re(self) -> re.Pattern[str]:
+        return re.compile(rf"{re.escape(self.postmortems)}/[\w.-]+\.md")
+
+
+def load_config(root: Path) -> Config:
+    """Read gotcha.toml if present. Absent file, or absent key, means the default."""
+    path = root / CONFIG_FILE
+    if not path.is_file():
+        return Config()
+    with path.open("rb") as handle:
+        raw = tomllib.load(handle)
+    project = raw.get("project", {})
+    paths = raw.get("paths", {})
+    index = raw.get("index", {})
+    skill = raw.get("skill", {})
+    base = Config()
+    return Config(
+        name=project.get("name", base.name),
+        contract=paths.get("contract", base.contract),
+        gotchas=paths.get("gotchas", base.gotchas),
+        postmortems=paths.get("postmortems", base.postmortems),
+        heading=index.get("heading", base.heading),
+        skill_name=skill.get("name", base.skill_name),
+        description_max_chars=skill.get("description_max_chars", base.description_max_chars),
+    )
 
 
 # ---- parsing ---------------------------------------------------------------
@@ -85,7 +136,7 @@ def unfenced_lines(text: str) -> Iterator[tuple[int, str]]:
             yield lineno, line
 
 
-def parse_index(text: str) -> tuple[dict[str, list[str]], list[str]]:
+def parse_index(text: str, heading: str = SECTION_PREFIX) -> tuple[dict[str, list[str]], list[str]]:
     """Return ({domain file: [raw bullet titles]}, errors) from AGENTS.md text.
 
     The section opens on a line starting with SECTION_PREFIX and closes at the
@@ -102,7 +153,7 @@ def parse_index(text: str) -> tuple[dict[str, list[str]], list[str]]:
 
     text = HTML_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     for lineno, line in unfenced_lines(text):
-        if line.startswith(SECTION_PREFIX):
+        if line.startswith(heading):
             in_section = True
             found_section = True
             continue
@@ -134,7 +185,7 @@ def parse_index(text: str) -> tuple[dict[str, list[str]], list[str]]:
 
     if not found_section:
         errors.append(
-            f"AGENTS.md must carry the gotcha trigger index (a section starting {SECTION_PREFIX!r})"
+            f"AGENTS.md must carry the gotcha trigger index (a section starting {heading!r})"
         )
     return index, errors
 
@@ -169,21 +220,30 @@ def _dupes(items: list[str]) -> list[str]:
     return sorted({t for t in items if items.count(t) > 1})
 
 
-def check(root: Path, *, require_dates: bool = True, skill_name: str = SKILL_NAME) -> list[str]:
+def check(
+    root: Path,
+    *,
+    require_dates: bool = True,
+    skill_name: str | None = None,
+    config: Config | None = None,
+) -> list[str]:
+    cfg = config or Config()
+    if skill_name is not None:
+        cfg = Config(**{**cfg.__dict__, "skill_name": skill_name})
     errors: list[str] = []
 
-    agents_path = root / "AGENTS.md"
+    agents_path = root / cfg.contract
     if not agents_path.is_file():
-        return ["AGENTS.md must exist at the repository root (the canonical agent contract)"]
+        return [f"{cfg.contract} must exist at the repository root (the canonical agent contract)"]
 
-    index, index_errors = parse_index(read_text(agents_path))
+    index, index_errors = parse_index(read_text(agents_path), cfg.heading)
     errors.extend(index_errors)
 
     for fname, bullets in index.items():
-        gpath = root / GOTCHAS_DIR / fname
-        rel = f"{GOTCHAS_DIR}/{fname}"
+        gpath = root / cfg.gotchas / fname
+        rel = f"{cfg.gotchas}/{fname}"
         if not gpath.is_file():
-            errors.append(f"{rel} is missing but referenced by the AGENTS.md index")
+            errors.append(f"{rel} is missing but referenced by the {cfg.contract} index")
             continue
         text = read_text(gpath)
         entries = parse_entries(text)
@@ -191,18 +251,28 @@ def check(root: Path, *, require_dates: bool = True, skill_name: str = SKILL_NAM
         stripped = {ANNOTATION_RE.sub("", b) for b in bullets}
         accepted = set(bullets) | stripped
 
+        meta = parse_frontmatter(text)
+        missing = [k for k in FRONTMATTER_KEYS if not meta.get(k)]
+        if missing:
+            errors.append(
+                f"{rel}: front matter is missing {', '.join(missing)} "
+                f"— gen-llms-txt.py has nothing to describe the file with"
+            )
+        elif not DATE_RE.fullmatch(meta["updated"]):
+            errors.append(f"{rel}: front matter 'updated' must be YYYY-MM-DD, got {meta['updated']!r}")
+
         for b in bullets:
             if b not in h2 and ANNOTATION_RE.sub("", b) not in h2:
                 errors.append(f"gotcha index line has NO H2 in {rel}: {b!r}")
         for title in h2:
             if title not in accepted:
-                errors.append(f"{rel} H2 has NO index line in AGENTS.md: {title!r}")
+                errors.append(f"{rel} H2 has NO index line in {cfg.contract}: {title!r}")
         for title in _dupes(bullets):
             errors.append(f"gotcha index lines for {fname} must be unique; duplicate: {title!r}")
         for title in _dupes(h2):
             errors.append(f"H2 titles in {rel} must be unique; duplicate: {title!r}")
 
-        for ref in sorted(set(POSTMORTEM_REF_RE.findall(text))):
+        for ref in sorted(set(cfg.postmortem_ref_re.findall(text))):
             if not (root / ref).is_file():
                 errors.append(f"{rel} cites a postmortem that does not exist: {ref}")
 
@@ -211,19 +281,20 @@ def check(root: Path, *, require_dates: bool = True, skill_name: str = SKILL_NAM
                 if not DATE_RE.search(body):
                     errors.append(f"{rel}: entry has no YYYY-MM-DD date: {title!r}")
 
-    gdir = root / GOTCHAS_DIR
+    gdir = root / cfg.gotchas
     if gdir.is_dir():
         for path in sorted(gdir.glob("*.md")):
             if path.name != "README.md" and path.name not in index:
                 errors.append(
-                    f"{GOTCHAS_DIR}/{path.name} exists but is not referenced by any domain heading in AGENTS.md"
+                    f"{cfg.gotchas}/{path.name} exists but is not referenced by "
+                    f"any domain heading in {cfg.contract}"
                 )
 
-    errors.extend(_check_skill(root, skill_name))
+    errors.extend(_check_skill(root, cfg.skill_name, cfg.description_max_chars))
     return errors
 
 
-def _check_skill(root: Path, skill_name: str) -> list[str]:
+def _check_skill(root: Path, skill_name: str, desc_max: int = SKILL_DESC_MAX_CHARS) -> list[str]:
     copies = [p for d in SKILL_SEARCH_DIRS if (p := root / d / skill_name / "SKILL.md").is_file()]
     if not copies:
         return [f"{skill_name}/SKILL.md not found under any of: {', '.join(SKILL_SEARCH_DIRS)}"]
@@ -240,9 +311,9 @@ def _check_skill(root: Path, skill_name: str) -> list[str]:
         errors.append(f"{rel}: frontmatter description is missing")
     elif BLOCK_SCALAR_RE.match(desc):
         errors.append(f"{rel}: frontmatter description must be a single line, not a YAML block scalar")
-    elif len(desc) > SKILL_DESC_MAX_CHARS:
+    elif len(desc) > desc_max:
         errors.append(
-            f"{rel}: frontmatter description is {len(desc)} chars; max {SKILL_DESC_MAX_CHARS}"
+            f"{rel}: frontmatter description is {len(desc)} chars; max {desc_max}"
         )
 
     canonical_bytes = canonical.read_bytes()
@@ -291,7 +362,13 @@ Intro paragraph. The count is hand-kept; parity is asserted.
 - `docs/gotchas/` — lessons.
 """
 
-_FIXTURE_GOTCHA = """# Gotchas — infra
+_FIXTURE_GOTCHA = """---
+domain: Infra
+triggers: infra/, deploy workflows
+updated: 2026-01-01
+---
+
+# Gotchas — infra
 
 Preamble.
 
@@ -389,6 +466,12 @@ _MUTATIONS: list[Mutation] = [
     ("missing-section",
      lambda r: _replace(r / "AGENTS.md", "## Environment gotchas", "## Gotchas"),
      "trigger index"),
+    ("missing-frontmatter",
+     lambda r: _replace(r / GOTCHAS_DIR / "infra.md", "---\ndomain: Infra\ntriggers: infra/, deploy workflows\nupdated: 2026-01-01\n---\n\n", ""),
+     "front matter is missing"),
+    ("bad-frontmatter-date",
+     lambda r: _replace(r / GOTCHAS_DIR / "infra.md", "updated: 2026-01-01", "updated: last Tuesday"),
+     "must be YYYY-MM-DD"),
     ("dangling-postmortem",
      lambda r: _replace(r / GOTCHAS_DIR / "infra.md", "2026-01-01-example.md", "2026-01-01-missing.md"),
      "postmortem that does not exist"),
@@ -455,7 +538,7 @@ def selftest() -> int:
 
 def find_root(start: Path) -> Path:
     for candidate in (start, *start.parents):
-        if (candidate / "AGENTS.md").is_file():
+        if (candidate / "AGENTS.md").is_file() or (candidate / CONFIG_FILE).is_file():
             return candidate
     return start
 
@@ -464,8 +547,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=None,
                         help="repository root (default: nearest ancestor of cwd containing AGENTS.md)")
-    parser.add_argument("--skill-name", default=SKILL_NAME,
-                        help=f"skill directory name to verify (default: {SKILL_NAME})")
+    parser.add_argument("--skill-name", default=None,
+                        help=f"override the skill directory name (default: {CONFIG_FILE} or {SKILL_NAME})")
     parser.add_argument("--no-require-dates", dest="require_dates", action="store_false",
                         help="do not require a YYYY-MM-DD date in every entry (for backfilling legacy repos)")
     parser.add_argument("--selftest", action="store_true",
@@ -477,7 +560,8 @@ def main(argv: list[str] | None = None) -> int:
         return selftest()
 
     root = (args.root or find_root(Path.cwd())).resolve()
-    errors = check(root, require_dates=args.require_dates, skill_name=args.skill_name)
+    cfg = load_config(root)
+    errors = check(root, require_dates=args.require_dates, skill_name=args.skill_name, config=cfg)
     if errors:
         print(f"agent-workflow contract VIOLATED ({len(errors)}):", file=sys.stderr)
         for e in errors:

@@ -307,7 +307,7 @@ in IAM.
 
 ## The contract
 
-`scripts/assert-agent-workflow.py` is stdlib Python (3.9+), about 500 lines
+`scripts/assert-agent-workflow.py` is stdlib Python (3.11+, for `tomllib`), about 500 lines
 including its selftest, and asserts:
 
 | # | Check | Direction |
@@ -433,6 +433,52 @@ Then add the two contract commands to CI:
 - run: python3 scripts/assert-agent-workflow.py --selftest
 - run: python3 scripts/assert-agent-workflow.py
 ```
+
+## Configuration
+
+Every path this contract cares about has a default, and the defaults are the
+layout shown throughout this README. A repository whose layout matches needs no
+configuration at all.
+
+When it differs, `gotcha.toml` at the repository root overrides only the keys
+you set:
+
+```toml
+[project]
+name = "your-repo"          # llms.txt H1; the directory name is not the repo name
+
+[paths]
+contract    = "AGENTS.md"
+gotchas     = "docs/gotchas"
+postmortems = "docs/postmortems"
+
+[index]
+heading = "## Environment gotchas"
+
+[skill]
+name                  = "gotcha-distill"
+description_max_chars = 512
+```
+
+## llms.txt
+
+`scripts/gen-llms-txt.py` renders the trigger index as an
+[llms.txt](https://llmstxt.org) file: an H1, a one-blockquote summary, an H2 per
+domain, and one `- [title](file#anchor): trigger` line per gotcha. Postmortems
+go under `Optional`, which is the spec's marker for links an agent can skip
+when context is short.
+
+This is a transformation rather than an invention — the index is already a list
+of links with notes, which is exactly what the format asks for. Each domain
+file carries front matter (`domain`, `triggers`, `updated`) that the generator
+reads instead of re-parsing prose, and that the contract asserts is present.
+
+```bash
+python3 scripts/gen-llms-txt.py          # write llms.txt
+python3 scripts/gen-llms-txt.py --check  # exit 1 if it is stale
+```
+
+CI runs `--check`, so a generated file cannot drift from its source.
 
 ## Writing a good gotcha
 

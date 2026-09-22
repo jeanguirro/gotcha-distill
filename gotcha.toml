@@ -1,0 +1,28 @@
+# Layout of this repository, for scripts/assert-agent-workflow.py and
+# scripts/gen-llms-txt.py.
+#
+# Every key is optional and every default is the layout shown here, so a
+# repository without this file behaves exactly as one with it. Adopt the file
+# only when your paths differ.
+
+[project]
+# Used as the llms.txt H1. Explicit, because the directory a repository happens
+# to be cloned into is not its name — CI checks out as the repo name while a
+# local clone may not, and a generated file that differs between them fails
+# its own drift check.
+name = "gotcha-distill"
+
+[paths]
+contract    = "AGENTS.md"
+gotchas     = "docs/gotchas"
+postmortems = "docs/postmortems"
+
+[index]
+# The H2 that opens the always-loaded trigger index inside `contract`.
+heading = "## Environment gotchas"
+
+[skill]
+name = "gotcha-distill"
+# Always visible in every session, so this is a ratchet rather than a vendor
+# limit. Claude Code truncates description + when_to_use at 1,536 characters.
+description_max_chars = 512

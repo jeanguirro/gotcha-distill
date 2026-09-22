@@ -1,3 +1,9 @@
+---
+domain: Infra & AWS
+triggers: infra/, deploy workflows, artifact buckets, cross-account IAM
+updated: 2026-09-22
+---
+
 # Gotchas — infra & AWS (deploy pipeline, artifact buckets, cross-account IAM)
 
 Read BEFORE touching `infra/`, deploy workflows, artifact buckets, or any

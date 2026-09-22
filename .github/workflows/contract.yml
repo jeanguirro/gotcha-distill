@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 3.9 is the declared floor; 3.13 is current.
-        python: ["3.9", "3.13"]
+        # 3.11 is the declared floor (tomllib); 3.13 is current.
+        python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +27,9 @@ jobs:
 
       - name: gotcha index <-> docs/gotchas parity
         run: python3 scripts/assert-agent-workflow.py
+
+      - name: llms.txt matches a fresh generation
+        run: python3 scripts/gen-llms-txt.py --check
 
       - name: symlinks are committed as symlinks (mode 120000)
         run: |

@@ -30,10 +30,19 @@ contract compares whole lines and does not join wrapped bullets.
 `python3 scripts/assert-agent-workflow.py` asserts, for every domain file the
 index references:
 
+- the index heading carries a `when touching …` trigger clause;
 - every index bullet has an identical `##` heading here;
 - every `##` heading here has an identical index bullet;
 - no duplicate titles on either side;
 - every `*.md` in this directory except this README is referenced by an
-  index heading (no orphan files).
+  index heading (no orphan files);
+- every `docs/postmortems/…md` path cited in an entry exists;
+- every entry carries a `YYYY-MM-DD` date (`--no-require-dates` only while
+  backfilling a legacy repository).
+
+An index bullet may carry a trailing `(annotation)` that the `##` title does
+not — `(do not re-investigate)` is the common one. The exact form is tried
+first, so a title that legitimately ends in a parenthetical, such as
+`(staging only)`, compares literally and needs no special handling.
 
 This file is exempt from the parity check by name.

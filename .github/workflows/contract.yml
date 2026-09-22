@@ -31,7 +31,7 @@ jobs:
       - name: symlinks are committed as symlinks (mode 120000)
         run: |
           bad=0
-          for p in .claude/skills .opencode/skills .cursor/skills CLAUDE.md; do
+          for p in .claude/skills CLAUDE.md; do
             mode="$(git ls-files -s -- "$p" | awk '{print $1}')"
             if [ "$mode" != "120000" ]; then
               echo "::error::$p is tracked with mode ${mode:-<untracked>}, expected 120000 (symlink)"
@@ -45,6 +45,13 @@ jobs:
           set -euo pipefail
           tmp="$(mktemp -d)"
           git init -q "$tmp"
-          bash scripts/install.sh "$tmp" --tools claude,opencode,cursor,codex
-          bash scripts/install.sh "$tmp" --tools claude,opencode,cursor,codex
+          bash scripts/install.sh "$tmp"
+          bash scripts/install.sh "$tmp"
+          (cd "$tmp" && python3 scripts/assert-agent-workflow.py)
+
+      - name: install.sh --copy produces identical copies the contract accepts
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          bash scripts/install.sh "$tmp" --tools claude,cursor,opencode --copy
           (cd "$tmp" && python3 scripts/assert-agent-workflow.py)

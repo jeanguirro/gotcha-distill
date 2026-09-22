@@ -9,6 +9,10 @@ production Lambda ran `v41` code with `v42-hotfix` configuration (the
 updated before the code fetch failed. No customer-visible error; one internal
 dashboard reported the wrong release for the duration.
 
+**Note:** this incident is a synthesized composite written to exercise every
+step of the gotcha-distill loop. Account IDs, bucket names and timings are
+invented and internally consistent; nothing here describes a real outage.
+
 ## What happened
 
 | UTC   | Event |

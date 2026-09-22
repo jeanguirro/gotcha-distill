@@ -39,10 +39,12 @@ frequencies:
 | 2 | `SKILL.md` — how to write a lesson | Only when an agent has just fixed something | ~1,500 tokens, once per distillation |
 | 3 | `docs/gotchas/<domain>.md` — the full entry | Only when the task touches that domain's trigger | ~150–300 tokens, only the relevant domain |
 
-A repository running this pattern in production carries 80 asserted gotchas
-in 5.3 KB of always-loaded index — about 54 characters per lesson, versus
-the 61 KB its four domain files weigh in full. The agent knows *that* eighty
-hazards exist and *which files* to open for the domain it is about to touch.
+One private repository of the author's has run this pattern since its first
+incident. Measured on 2026-09-22: 80 asserted gotchas, 5.3 KB of always-loaded
+index (about 54 characters per lesson), 61 KB across its four domain files —
+an 11.5:1 ratio between what every session pays and what a task actually
+reads. The agent knows *that* eighty hazards exist and *which file* to open
+for the domain it is about to touch.
 
 ### 2. Re-litigation
 
@@ -95,8 +97,10 @@ loader exactly when to pull the body into context.
 
 ## Case study: the 403 that was not a permission
 
-Everything below exists in this repository as real files, and the contract
-passes against them. The postmortem is
+This incident is a synthesized composite, built to exercise every step of
+the loop; its numbers are internally consistent but it did not happen to a
+real system. Everything below nonetheless exists in this repository as real
+files, and the contract passes against them. The postmortem is
 [`docs/postmortems/2026-09-14-cross-account-artifact-expiry.md`](docs/postmortems/2026-09-14-cross-account-artifact-expiry.md);
 the gotchas are in
 [`docs/gotchas/infra-aws.md`](docs/gotchas/infra-aws.md); the index is in
@@ -303,25 +307,36 @@ in IAM.
 
 ## The contract
 
-`scripts/assert-agent-workflow.py` is stdlib Python (3.9+), about 400 lines
+`scripts/assert-agent-workflow.py` is stdlib Python (3.9+), about 500 lines
 including its selftest, and asserts:
 
 | # | Check | Direction |
 |---|-------|-----------|
 | 1 | `AGENTS.md` exists and carries a `## Environment gotchas` section | precondition |
-| 2 | Every `### … \`docs/gotchas/<file>.md\` …` heading names a file that exists | index → disk |
+| 2 | Every `### … \`docs/gotchas/<file>.md\` …` heading names a file that exists **and carries a `when touching …` trigger clause** | index → disk, routing |
 | 3 | Every index bullet has an identical `##` title in its domain file | index → file |
 | 4 | Every `##` title in a referenced domain file has an identical index bullet | file → index |
 | 5 | No duplicate titles on either side, per domain; no domain declared twice | uniqueness |
 | 6 | Every `docs/gotchas/*.md` except `README.md` is referenced by a heading | disk → index |
 | 7 | No bullet appears in the section before the first domain heading | shape |
-| 8 | `SKILL.md` frontmatter has `name: gotcha-distill` and a single-line description ≤ 400 chars | skill |
+| 8 | Every `docs/postmortems/<file>.md` cited in a domain file exists | file → disk |
+| 9 | Every entry carries a `YYYY-MM-DD` date (`--no-require-dates` while backfilling a legacy repo) | entry shape |
+| 10 | Every copy of `SKILL.md` has `name: gotcha-distill` (or `--skill-name`) and a single-line description ≤ 512 chars, and all copies are byte-identical | skill |
 
-A trailing `(annotation)` on an index line — `(do not re-investigate)` is the
-common one — is stripped before comparison, so the domain file's title stays
-clean. HTML comments and fenced code blocks are ignored, so `AGENTS.md` can
-carry an example heading without declaring a domain. Files may be CRLF or
-carry a UTF-8 BOM; the selftest covers both.
+Check 2 is the one the whole design rests on: a heading without a trigger
+clause is consistent, present, and never read. Check 9 is the mechanical
+half of "gotchas are incident-born" — it cannot tell an incident from an
+opinion, but it makes writing an opinion require a deliberate lie rather than
+mere laziness.
+
+An index line may carry a trailing `(annotation)` that the title does not —
+`(do not re-investigate)` is the common one. The exact form is tried first,
+so a title that legitimately ends in a parenthetical (`(staging only)`,
+`(GKE 1.30+)`) compares literally. HTML comments and fenced code blocks are
+ignored, so `AGENTS.md` can carry an example heading without declaring a
+domain. Files may be CRLF or carry a UTF-8 BOM; the selftest covers both. The
+512-character description ceiling is a deliberate always-loaded budget, not a
+vendor limit (Claude Code truncates `description` + `when_to_use` at 1,536).
 
 The count in the index preamble ("80 gotchas") is deliberately **not**
 asserted. Counts drift harmlessly; parity does not. Asserting the count would
@@ -330,17 +345,18 @@ make every distillation a two-file edit for no safety gain.
 ### Proof of failure
 
 `--selftest` builds a synthetic repository in a temp directory (three times:
-LF, CRLF, and with a BOM), asserts the contract holds, then applies thirteen
+LF, CRLF, and with a BOM), asserts the contract holds, then applies seventeen
 named mutations — an index line with no entry, an entry with no index line,
 a deleted domain file, an orphan file, a duplicate on each side, a domain
-declared twice, a bullet outside any domain, a removed section, a renamed
-skill, a bloated description, a folded description, a missing skill — and
-asserts each one trips the expected check. A check that cannot be shown to
-fail is not a check.
+declared twice, a heading with no trigger clause, a bullet outside any
+domain, a removed section, a dangling postmortem link, an undated entry, a
+renamed skill, a bloated description, a folded description, a drifted skill
+copy, a missing skill — and asserts each one trips the expected check. A
+check that cannot be shown to fail is not a check.
 
 ```
 $ python3 scripts/assert-agent-workflow.py --selftest
-selftest OK (13 mutations each trip their check).
+selftest OK (17 mutations each trip their check).
 ```
 
 CI runs both. See [`.github/workflows/contract.yml`](.github/workflows/contract.yml).
@@ -364,39 +380,41 @@ bash gotcha-distill/scripts/install.sh /path/to/your/repo
 
 `install.sh` copies the skill to `.agents/skills/gotcha-distill/`, the
 contract to `scripts/`, and the two `README.md` files under `docs/`; creates
-or appends the `## Environment gotchas` section in `AGENTS.md`; and wires
-each tool directory to the canonical skill. It never overwrites an existing
+or appends the `## Environment gotchas` section in `AGENTS.md`; and bridges
+Claude Code to the canonical skill. It never overwrites an existing
 `docs/gotchas/` or `docs/postmortems/` file, and is safe to re-run.
 
 ```
-usage: scripts/install.sh <target-repo> [--tools claude,opencode,cursor,codex] [--copy] [--force]
+usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--copy] [--force]
 ```
 
-- `--tools` limits which tool directories are wired (default: all four).
+- `--tools` selects which tool directories to bridge (default: `claude`,
+  the only tool that needs one — see the table below). Name `opencode` or
+  `cursor` only for versions that predate `.agents/skills` support.
 - `--copy` copies the skill into each tool directory instead of symlinking —
   use it on Windows checkouts without `core.symlinks`, or if your tool's
-  skill loader does not follow symlinks.
+  skill loader does not follow symlinks. The contract asserts every copy is
+  byte-identical to the canonical one, so drift is caught.
 - `--force` overwrites an existing skill directory and contract script
   (never the docs).
 
 ### Option C — by hand
 
-One canonical copy, symlinked into each tool's discovery path:
+One canonical copy in `.agents/skills/`. Who reads what, per current vendor
+documentation:
 
-| Tool | Reads skills from | Reads the always-loaded contract from |
-|------|-------------------|----------------------------------------|
-| Codex | `.agents/skills/<name>/SKILL.md` | `AGENTS.md` |
-| Claude Code | `.claude/skills/<name>/SKILL.md` | `CLAUDE.md` |
-| OpenCode | `.opencode/skills/<name>/SKILL.md` | `AGENTS.md` |
-| Cursor | `.cursor/skills/<name>/SKILL.md` | `AGENTS.md` |
+| Tool | Reads skills from | Needs a bridge? | Always-loaded contract |
+|------|-------------------|-----------------|------------------------|
+| Codex | `.agents/skills/` | No | `AGENTS.md` |
+| Cursor | `.agents/skills/`, `.cursor/skills/`, `.claude/skills/` | No | `AGENTS.md` |
+| OpenCode | `.opencode/skills/`, `.claude/skills/`, `.agents/skills/` | No | `AGENTS.md` |
+| Claude Code | `.claude/skills/` only | **Yes** | `CLAUDE.md` |
 
 ```bash
 mkdir -p .agents/skills && cp -R gotcha-distill/.agents/skills/gotcha-distill .agents/skills/
 cp gotcha-distill/scripts/assert-agent-workflow.py scripts/
 
 ln -s ../.agents/skills .claude/skills
-ln -s ../.agents/skills .opencode/skills
-ln -s ../.agents/skills .cursor/skills
 ln -s AGENTS.md CLAUDE.md
 ```
 
@@ -404,7 +422,10 @@ Commit the symlinks as symlinks (git mode `120000`). The CI workflow in this
 repository includes a step that fails if a checkout with `core.symlinks=false`
 turned them into regular files. If your team already has a `CLAUDE.md` with
 content, keep it and add a line pointing at `AGENTS.md` instead of replacing
-it.
+it. Cursor has had reports of symlinked skill directories being filtered out
+when the resolved path escapes the project root; since Cursor reads
+`.agents/skills/` directly, do not add a `.cursor/skills` link at all — or
+use `--copy` if you must.
 
 Then add the two contract commands to CI:
 
@@ -453,11 +474,27 @@ file.
 Do not park incident narratives in a handoff or status document and forget
 them; those documents describe what *is*, not how it came to be.
 
-**Monorepo.** One domain file per package or service is usually right
-(`docs/gotchas/api.md`, `docs/gotchas/web.md`), with the heading's trigger
-naming the package path. If a lesson spans packages, it belongs in the
-domain where the *fix* landed, with the other package named in the
+**Monorepo.** One domain file per package or service is usually right, still
+under `docs/gotchas/` at the repository root (`docs/gotchas/api.md`,
+`docs/gotchas/web.md`) — the contract's path is fixed — with the heading's
+trigger naming the package path. If a lesson spans packages, it belongs in
+the domain where the *fix* landed, with the other package named in the
 paragraph.
+
+**Deriving triggers from an existing rules directory.** If the repository
+already has path-scoped agent rules — `.cursor/rules/*.mdc` with `globs:`,
+or an equivalent — those globs are reviewed, agreed statements of "which
+files does this concern apply to", which is exactly what a trigger clause
+is. Cut domain files along the same lines and copy the globs into the
+`when touching …` clause: the triggers are then not invented, and a task
+that loads a rule loads the matching gotcha file.
+
+**An existing incident home.** If the team already runs a post-incident
+review process — an RCA directory, an SRE template set — do not create
+`docs/postmortems/` as a competing second home. Point step 1 of the skill at
+the existing location and cite that path from the gotcha entry; the
+contract's link check only requires that a cited `docs/postmortems/…` path
+resolves, and does not care whether other paths are cited alongside it.
 
 **Other always-loaded files.** The contract only knows about `AGENTS.md`.
 If your team's always-loaded file is named differently, symlink it — that is

@@ -5,16 +5,21 @@ The index in AGENTS.md is the always-loaded layer; the domain files under
 docs/gotchas/ are lazy-loaded. This script asserts they cannot drift apart:
 
   1. AGENTS.md exists and carries a "## Environment gotchas" section.
-  2. Every "### ... `docs/gotchas/<file>.md` ..." heading names a file that exists.
+  2. Every "### ... `docs/gotchas/<file>.md` ..." heading names a file that
+     exists AND carries a "when touching ..." trigger clause.
   3. Every index bullet under a domain heading has an identical "## " title
-     in that domain file.
+     in that domain file. A bullet may carry a trailing "(annotation)" that
+     the title does not; the exact form is tried first, then the stripped one.
   4. Every "## " title in a referenced domain file has an identical index bullet.
-  5. No duplicate titles on either side, per domain.
+  5. No duplicate titles on either side, per domain; no domain declared twice.
   6. Every docs/gotchas/*.md on disk (except README.md) is referenced by a
      domain heading — no orphan files.
   7. No index bullet appears in the section before the first domain heading.
-  8. The gotcha-distill SKILL.md frontmatter has the right name and a
-     description within budget.
+  8. Every docs/postmortems/<file>.md cited in a domain file exists.
+  9. Every entry carries a YYYY-MM-DD date (disable with --no-require-dates
+     while backfilling a legacy repository).
+ 10. Every copy of the skill's SKILL.md has the right name and a single-line
+     description within budget, and all copies are byte-identical.
 
 Exit 0 when the contract holds, 1 with one line per violation otherwise.
 `--selftest` builds a synthetic fixture, asserts it is clean, then applies
@@ -31,20 +36,25 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 SECTION_PREFIX = "## Environment gotchas"
 SECTION_CLOSE_RE = re.compile(r"^#{1,2} ")
 DOMAIN_H3_RE = re.compile(r"^### .*`docs/gotchas/([\w.-]+\.md)`")
+TRIGGER_RE = re.compile(r"\bwhen touching\s+\S")
 ANNOTATION_RE = re.compile(r"\s*\([^)]*\)$")
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
-FENCE_RE = re.compile(r"^\s*(```|~~~)")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+POSTMORTEM_REF_RE = re.compile(r"docs/postmortems/[\w.-]+\.md")
+DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 BLOCK_SCALAR_RE = re.compile(r"^[>|][+-]?\s*$")
 GOTCHAS_DIR = Path("docs/gotchas")
 
 SKILL_NAME = "gotcha-distill"
 SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-SKILL_DESC_MAX_CHARS = 400
+# A deliberate always-loaded budget, not a vendor limit (Claude Code truncates
+# description + when_to_use at 1,536 characters).
+SKILL_DESC_MAX_CHARS = 512
 SKILL_SEARCH_DIRS = (".agents/skills", ".claude/skills", ".opencode/skills", ".cursor/skills")
 
 
@@ -55,29 +65,43 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
 
 
+def unfenced_lines(text: str) -> Iterator[tuple[int, str]]:
+    """Yield (lineno, line) for lines outside fenced code blocks.
+
+    A fence closes only on the same delimiter character that opened it, so a
+    ``` block may contain a ~~~ line and vice versa.
+    """
+    fence: str | None = None
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        m = FENCE_RE.match(line)
+        if m:
+            token = m.group(1)[0]
+            if fence is None:
+                fence = token
+            elif fence == token:
+                fence = None
+            continue
+        if fence is None:
+            yield lineno, line
+
+
 def parse_index(text: str) -> tuple[dict[str, list[str]], list[str]]:
-    """Return ({domain file: [bullet titles]}, errors) from AGENTS.md text.
+    """Return ({domain file: [raw bullet titles]}, errors) from AGENTS.md text.
 
     The section opens on a line starting with SECTION_PREFIX and closes at the
-    next H1 or H2. Domain headings must backtick-quote the file path. A
-    trailing "(annotation)" on a bullet is a hint, not part of the title.
-    HTML comments are blanked (line count preserved) and fenced code blocks
-    are skipped, so templates can carry examples without declaring domains.
+    next H1 or H2. Domain headings must backtick-quote the file path and carry
+    a "when touching ..." trigger clause. HTML comments are blanked (line count
+    preserved) and fenced code blocks are skipped, so templates can carry
+    examples without declaring domains.
     """
     index: dict[str, list[str]] = {}
     errors: list[str] = []
     in_section = False
-    in_fence = False
     found_section = False
     current: str | None = None
 
     text = HTML_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if FENCE_RE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
+    for lineno, line in unfenced_lines(text):
         if line.startswith(SECTION_PREFIX):
             in_section = True
             found_section = True
@@ -92,10 +116,15 @@ def parse_index(text: str) -> tuple[dict[str, list[str]], list[str]]:
             current = m.group(1)
             if current in index:
                 errors.append(f"AGENTS.md:{lineno}: domain {GOTCHAS_DIR}/{current} is declared twice in the index")
+            if not TRIGGER_RE.search(line):
+                errors.append(
+                    f"AGENTS.md:{lineno}: domain heading for {GOTCHAS_DIR}/{current} has no "
+                    f'"when touching ..." trigger clause; an index nobody can match to a task routes nothing'
+                )
             index.setdefault(current, [])
             continue
         if line.startswith("- "):
-            title = ANNOTATION_RE.sub("", line[2:].strip())
+            title = line[2:].strip()
             if current is None:
                 errors.append(
                     f"AGENTS.md:{lineno}: index line appears before any domain heading: {title!r}"
@@ -110,16 +139,15 @@ def parse_index(text: str) -> tuple[dict[str, list[str]], list[str]]:
     return index, errors
 
 
-def parse_h2(text: str) -> list[str]:
-    titles: list[str] = []
-    in_fence = False
-    for line in text.splitlines():
-        if FENCE_RE.match(line):
-            in_fence = not in_fence
-            continue
-        if not in_fence and line.startswith("## "):
-            titles.append(re.sub(r"^##\s+", "", line).strip())
-    return titles
+def parse_entries(text: str) -> list[tuple[str, str]]:
+    """Return [(H2 title, body text)] for a domain file, ignoring fenced blocks."""
+    entries: list[tuple[str, list[str]]] = []
+    for _, line in unfenced_lines(text):
+        if line.startswith("## "):
+            entries.append((re.sub(r"^##\s+", "", line).strip(), []))
+        elif entries:
+            entries[-1][1].append(line)
+    return [(title, "\n".join(body)) for title, body in entries]
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
@@ -141,7 +169,7 @@ def _dupes(items: list[str]) -> list[str]:
     return sorted({t for t in items if items.count(t) > 1})
 
 
-def check(root: Path) -> list[str]:
+def check(root: Path, *, require_dates: bool = True, skill_name: str = SKILL_NAME) -> list[str]:
     errors: list[str] = []
 
     agents_path = root / "AGENTS.md"
@@ -153,20 +181,35 @@ def check(root: Path) -> list[str]:
 
     for fname, bullets in index.items():
         gpath = root / GOTCHAS_DIR / fname
+        rel = f"{GOTCHAS_DIR}/{fname}"
         if not gpath.is_file():
-            errors.append(f"{GOTCHAS_DIR}/{fname} is missing but referenced by the AGENTS.md index")
+            errors.append(f"{rel} is missing but referenced by the AGENTS.md index")
             continue
-        h2 = parse_h2(read_text(gpath))
-        for title in bullets:
-            if title not in h2:
-                errors.append(f"gotcha index line has NO H2 in {GOTCHAS_DIR}/{fname}: {title!r}")
+        text = read_text(gpath)
+        entries = parse_entries(text)
+        h2 = [title for title, _ in entries]
+        stripped = {ANNOTATION_RE.sub("", b) for b in bullets}
+        accepted = set(bullets) | stripped
+
+        for b in bullets:
+            if b not in h2 and ANNOTATION_RE.sub("", b) not in h2:
+                errors.append(f"gotcha index line has NO H2 in {rel}: {b!r}")
         for title in h2:
-            if title not in bullets:
-                errors.append(f"{GOTCHAS_DIR}/{fname} H2 has NO index line in AGENTS.md: {title!r}")
+            if title not in accepted:
+                errors.append(f"{rel} H2 has NO index line in AGENTS.md: {title!r}")
         for title in _dupes(bullets):
             errors.append(f"gotcha index lines for {fname} must be unique; duplicate: {title!r}")
         for title in _dupes(h2):
-            errors.append(f"H2 titles in {GOTCHAS_DIR}/{fname} must be unique; duplicate: {title!r}")
+            errors.append(f"H2 titles in {rel} must be unique; duplicate: {title!r}")
+
+        for ref in sorted(set(POSTMORTEM_REF_RE.findall(text))):
+            if not (root / ref).is_file():
+                errors.append(f"{rel} cites a postmortem that does not exist: {ref}")
+
+        if require_dates:
+            for title, body in entries:
+                if not DATE_RE.search(body):
+                    errors.append(f"{rel}: entry has no YYYY-MM-DD date: {title!r}")
 
     gdir = root / GOTCHAS_DIR
     if gdir.is_dir():
@@ -176,24 +219,22 @@ def check(root: Path) -> list[str]:
                     f"{GOTCHAS_DIR}/{path.name} exists but is not referenced by any domain heading in AGENTS.md"
                 )
 
-    errors.extend(_check_skill(root))
+    errors.extend(_check_skill(root, skill_name))
     return errors
 
 
-def _check_skill(root: Path) -> list[str]:
-    skill_path = next(
-        (p for d in SKILL_SEARCH_DIRS if (p := root / d / SKILL_NAME / "SKILL.md").is_file()),
-        None,
-    )
-    if skill_path is None:
-        return [f"{SKILL_NAME}/SKILL.md not found under any of: {', '.join(SKILL_SEARCH_DIRS)}"]
+def _check_skill(root: Path, skill_name: str) -> list[str]:
+    copies = [p for d in SKILL_SEARCH_DIRS if (p := root / d / skill_name / "SKILL.md").is_file()]
+    if not copies:
+        return [f"{skill_name}/SKILL.md not found under any of: {', '.join(SKILL_SEARCH_DIRS)}"]
 
-    fm = parse_frontmatter(read_text(skill_path))
-    rel = skill_path.relative_to(root)
+    canonical = copies[0]
+    rel = canonical.relative_to(root)
     errors: list[str] = []
+    fm = parse_frontmatter(read_text(canonical))
     name = fm.get("name", "")
-    if name != SKILL_NAME or not SKILL_NAME_RE.match(name):
-        errors.append(f"{rel}: frontmatter name must be {SKILL_NAME!r}, got {name!r}")
+    if name != skill_name or not SKILL_NAME_RE.match(name):
+        errors.append(f"{rel}: frontmatter name must be {skill_name!r}, got {name!r}")
     desc = fm.get("description", "")
     if not desc:
         errors.append(f"{rel}: frontmatter description is missing")
@@ -203,6 +244,13 @@ def _check_skill(root: Path) -> list[str]:
         errors.append(
             f"{rel}: frontmatter description is {len(desc)} chars; max {SKILL_DESC_MAX_CHARS}"
         )
+
+    canonical_bytes = canonical.read_bytes()
+    for other in copies[1:]:
+        if other.read_bytes() != canonical_bytes:
+            errors.append(
+                f"{other.relative_to(root)} differs from {rel} (every copy of the skill must be identical)"
+            )
     return errors
 
 
@@ -226,11 +274,14 @@ Intro paragraph. The count is hand-kept; parity is asserted.
 ```markdown
 ### Fenced — read `docs/gotchas/fenced.md` when touching `fenced/`
 - Fenced lesson
+~~~
+### Still fenced — read `docs/gotchas/still.md` when touching `still/`
 ```
 
 ### Infra — read `docs/gotchas/infra.md` when touching `infra/`
 - First lesson
 - Second lesson (do not re-investigate)
+- Third lesson (staging only)
 
 # An H1 closes the section too
 - Not an index line
@@ -250,11 +301,16 @@ Preamble.
 
 ## First lesson
 
-**First lesson** (2026-01-01): body.
+**First lesson** (2026-01-01): body. See
+`docs/postmortems/2026-01-01-example.md`.
 
 ## Second lesson
 
 **Second lesson** (2026-01-02): body.
+
+## Third lesson (staging only)
+
+**Third lesson** (2026-01-03): a title may legitimately end in a parenthetical.
 """
 
 _FIXTURE_SKILL = """---
@@ -277,6 +333,8 @@ def _build_fixture(root: Path, crlf: bool = False, bom: bool = False) -> None:
     (root / GOTCHAS_DIR).mkdir(parents=True)
     write(root / GOTCHAS_DIR / "infra.md", _FIXTURE_GOTCHA)
     write(root / GOTCHAS_DIR / "README.md", "# Gotchas\n")
+    (root / "docs/postmortems").mkdir(parents=True)
+    write(root / "docs/postmortems/2026-01-01-example.md", "# Post-mortem\n")
     skill_dir = root / ".agents/skills" / SKILL_NAME
     skill_dir.mkdir(parents=True)
     write(skill_dir / "SKILL.md", _FIXTURE_SKILL)
@@ -289,7 +347,14 @@ def _replace(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def _copy_skill_with_drift(root: Path) -> None:
+    dst = root / ".claude/skills" / SKILL_NAME
+    dst.mkdir(parents=True)
+    (dst / "SKILL.md").write_text(_FIXTURE_SKILL + "\nAn extra line.\n", encoding="utf-8")
+
+
 Mutation = tuple[str, Callable[[Path], None], str]
+_SKILL_MD = Path(".agents/skills") / SKILL_NAME / "SKILL.md"
 
 _MUTATIONS: list[Mutation] = [
     ("gotcha-index-drift",
@@ -308,29 +373,42 @@ _MUTATIONS: list[Mutation] = [
      lambda r: _replace(r / "AGENTS.md", "- First lesson\n", "- First lesson\n- First lesson\n"),
      "unique"),
     ("dupe-h2",
-     lambda r: _replace(r / GOTCHAS_DIR / "infra.md", "## Second lesson\n", "## Second lesson\n\nbody\n\n## Second lesson\n"),
+     lambda r: _replace(r / GOTCHAS_DIR / "infra.md", "## Second lesson\n", "## Second lesson\n\nbody (2026-01-02)\n\n## Second lesson\n"),
      "unique"),
     ("undomained-bullet",
      lambda r: _replace(r / "AGENTS.md", "parity is asserted.\n", "parity is asserted.\n- Stray line\n"),
      "before any"),
     ("dupe-domain-heading",
-     lambda r: _replace(r / "AGENTS.md", "- Second lesson (do not re-investigate)\n",
-                        "- Second lesson (do not re-investigate)\n### Infra again — read `docs/gotchas/infra.md` when touching `infra/`\n"),
+     lambda r: _replace(r / "AGENTS.md", "- Third lesson (staging only)\n",
+                        "- Third lesson (staging only)\n### Infra again — read `docs/gotchas/infra.md` when touching `infra/`\n"),
      "declared twice"),
-    ("folded-description",
-     lambda r: _replace(r / ".agents/skills" / SKILL_NAME / "SKILL.md",
-                        "description: Distill a bug into a gotcha. Use after fixing anything non-trivial.",
-                        "description: >\n  Distill a bug into a gotcha. Use after fixing anything non-trivial."),
-     "single line"),
+    ("no-trigger-clause",
+     lambda r: _replace(r / "AGENTS.md", "### Infra — read `docs/gotchas/infra.md` when touching `infra/`",
+                        "### Infra — read `docs/gotchas/infra.md`"),
+     "trigger clause"),
     ("missing-section",
      lambda r: _replace(r / "AGENTS.md", "## Environment gotchas", "## Gotchas"),
      "trigger index"),
+    ("dangling-postmortem",
+     lambda r: _replace(r / GOTCHAS_DIR / "infra.md", "2026-01-01-example.md", "2026-01-01-missing.md"),
+     "postmortem that does not exist"),
+    ("undated-entry",
+     lambda r: _replace(r / GOTCHAS_DIR / "infra.md", "(2026-01-02)", "(long ago)"),
+     "no YYYY-MM-DD"),
     ("skill-name-mismatch",
-     lambda r: _replace(r / ".agents/skills" / SKILL_NAME / "SKILL.md", "name: gotcha-distill", "name: gotcha_distill_x"),
+     lambda r: _replace(r / _SKILL_MD, "name: gotcha-distill", "name: gotcha_distill_x"),
      "name"),
     ("skill-desc-bloat",
-     lambda r: _replace(r / ".agents/skills" / SKILL_NAME / "SKILL.md", "non-trivial.", "non-trivial. " + "x" * SKILL_DESC_MAX_CHARS),
+     lambda r: _replace(r / _SKILL_MD, "non-trivial.", "non-trivial. " + "x" * SKILL_DESC_MAX_CHARS),
      "description"),
+    ("folded-description",
+     lambda r: _replace(r / _SKILL_MD,
+                        "description: Distill a bug into a gotcha. Use after fixing anything non-trivial.",
+                        "description: >\n  Distill a bug into a gotcha. Use after fixing anything non-trivial."),
+     "single line"),
+    ("skill-copy-drift",
+     _copy_skill_with_drift,
+     "differs"),
     ("skill-missing",
      lambda r: shutil.rmtree(r / ".agents"),
      "not found"),
@@ -347,6 +425,13 @@ def selftest() -> int:
             clean = check(root)
             if clean:
                 failures.append(f"{label} fixture reported errors: " + "; ".join(clean))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_fixture(root)
+        _replace(root / GOTCHAS_DIR / "infra.md", "(2026-01-02)", "(long ago)")
+        if check(root, require_dates=False):
+            failures.append("--no-require-dates did not disable the date check")
 
     for name, mutate, expected in _MUTATIONS:
         with tempfile.TemporaryDirectory() as tmp:
@@ -379,6 +464,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=None,
                         help="repository root (default: nearest ancestor of cwd containing AGENTS.md)")
+    parser.add_argument("--skill-name", default=SKILL_NAME,
+                        help=f"skill directory name to verify (default: {SKILL_NAME})")
+    parser.add_argument("--no-require-dates", dest="require_dates", action="store_false",
+                        help="do not require a YYYY-MM-DD date in every entry (for backfilling legacy repos)")
     parser.add_argument("--selftest", action="store_true",
                         help="run the fixture-mutation selftest instead of checking a repository")
     parser.add_argument("--quiet", action="store_true", help="print nothing on success")
@@ -388,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
         return selftest()
 
     root = (args.root or find_root(Path.cwd())).resolve()
-    errors = check(root)
+    errors = check(root, require_dates=args.require_dates, skill_name=args.skill_name)
     if errors:
         print(f"agent-workflow contract VIOLATED ({len(errors)}):", file=sys.stderr)
         for e in errors:

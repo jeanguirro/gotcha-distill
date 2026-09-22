@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Install the gotcha-distill skill and its contract into an existing repository.
 #
-# usage: scripts/install.sh <target-repo> [--tools claude,opencode,cursor,codex] [--copy] [--force]
+# usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--copy] [--force]
 #
-#   --tools   comma-separated list of agent tools to wire up (default: all four)
+# The canonical copy lives in .agents/skills/, which Codex, Cursor and OpenCode
+# read natively. Only Claude Code needs a bridge (.claude/skills), so that is
+# the default; name the others only for tool versions that predate
+# .agents/skills support.
+#
+#   --tools   comma-separated list of agent tools to wire up (default: claude)
 #   --copy    copy the skill into each tool directory instead of symlinking
 #             (for Windows checkouts or tools that do not follow symlinks)
 #   --force   overwrite an existing skill directory and contract script
@@ -14,16 +19,20 @@ set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="gotcha-distill"
-TOOLS="claude,opencode,cursor,codex"
+TOOLS="claude"
 COPY=0
 FORCE=0
 TARGET=""
 
 usage() {
   cat <<'EOF'
-usage: scripts/install.sh <target-repo> [--tools claude,opencode,cursor,codex] [--copy] [--force]
+usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--copy] [--force]
 
-  --tools   comma-separated list of agent tools to wire up (default: all four)
+The canonical copy lives in .agents/skills/, which Codex, Cursor and OpenCode
+read natively. Only Claude Code needs a bridge (.claude/skills), so that is the
+default; name the others only for tool versions that predate .agents/skills.
+
+  --tools   comma-separated list of agent tools to wire up (default: claude)
   --copy    copy the skill into each tool directory instead of symlinking
             (for Windows checkouts or tools that do not follow symlinks)
   --force   overwrite an existing skill directory and contract script

@@ -46,8 +46,11 @@ can match to their task is a line nobody loads.
    `docs/postmortems/YYYY-MM-DD-<slug>.md` first, following
    `docs/postmortems/README.md`. If that directory does not exist yet, create
    it and a README that states what belongs there (the gotcha-distill
-   template ships one); do not park the narrative in a handoff note and
-   forget it. Everything that did not reach production starts at step 2.
+   template ships one). If the repository already has an incident-review
+   home (an RCA directory, an SRE template set), write there instead and
+   cite that path from the entry — do not create a competing second home,
+   and do not park the narrative in a handoff note and forget it.
+   Everything that did not reach production starts at step 2.
 
 2. **Distill the gotcha** into the matching domain file under `docs/gotchas/`.
    The entry is one `## <title>` heading followed by a single paragraph:
@@ -63,7 +66,9 @@ can match to their task is a line nobody loads.
    heading. The bullet text **must equal the `##` title in the domain file
    exactly** — the contract asserts this, both directions. A trailing
    parenthetical such as `(do not re-investigate)` is permitted on the index
-   line and is stripped before comparison.
+   line as a hint the title does not carry. The heading's `when touching …`
+   clause is also asserted: it is the routing, and a heading without one is
+   a lesson nobody loads.
 
 4. **Validate predicates against a real captured sample** before they ship —
    this includes any regex over error text, log lines, or CLI output that

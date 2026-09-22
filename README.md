@@ -546,6 +546,12 @@ resolves, and does not care whether other paths are cited alongside it.
 If your team's always-loaded file is named differently, symlink it — that is
 what `CLAUDE.md -> AGENTS.md` is for.
 
+## Background
+
+Why this is shaped the way it is — the token economics, and why the parity
+assertion is the part that matters:
+<https://jeansantos.me/work/gotcha-distill/>
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

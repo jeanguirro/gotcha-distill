@@ -1,5 +1,7 @@
 # gotcha-distill
 
+[![contract](https://github.com/jeanguirro/gotcha-distill/actions/workflows/contract.yml/badge.svg)](https://github.com/jeanguirro/gotcha-distill/actions/workflows/contract.yml)
+
 An agent skill and a contract that turn incidents into durable, always-indexed,
 lazily-loaded repository knowledge. **A fix is not done until its lesson is
 durable** — written where the next agent will find it, cheap enough to keep in
@@ -99,8 +101,10 @@ loader exactly when to pull the body into context.
 
 This incident is a synthesized composite, built to exercise every step of
 the loop; its numbers are internally consistent but it did not happen to a
-real system. Everything below nonetheless exists in this repository as real
-files, and the contract passes against them. The postmortem is
+real system. The measurements earlier in this README (80 lessons, 5.3 KB
+always loaded, 11.5:1) are the opposite case: taken from a real production
+repository, which is private. Everything below nonetheless exists in this
+repository as real files, and the contract passes against them. The postmortem is
 [`docs/postmortems/2026-09-14-cross-account-artifact-expiry.md`](docs/postmortems/2026-09-14-cross-account-artifact-expiry.md);
 the gotchas are in
 [`docs/gotchas/infra-aws.md`](docs/gotchas/infra-aws.md); the index is in
@@ -345,18 +349,19 @@ make every distillation a two-file edit for no safety gain.
 ### Proof of failure
 
 `--selftest` builds a synthetic repository in a temp directory (three times:
-LF, CRLF, and with a BOM), asserts the contract holds, then applies seventeen
+LF, CRLF, and with a BOM), asserts the contract holds, then applies nineteen
 named mutations — an index line with no entry, an entry with no index line,
 a deleted domain file, an orphan file, a duplicate on each side, a domain
 declared twice, a heading with no trigger clause, a bullet outside any
-domain, a removed section, a dangling postmortem link, an undated entry, a
-renamed skill, a bloated description, a folded description, a drifted skill
-copy, a missing skill — and asserts each one trips the expected check. A
+domain, a removed section, missing front matter, a malformed front-matter
+date, a dangling postmortem link, an undated entry, a renamed skill, a
+bloated description, a folded description, a drifted skill copy, a missing
+skill — and asserts each one trips the expected check. A
 check that cannot be shown to fail is not a check.
 
 ```
 $ python3 scripts/assert-agent-workflow.py --selftest
-selftest OK (17 mutations each trip their check).
+selftest OK (19 mutations each trip their check).
 ```
 
 CI runs both. See [`.github/workflows/contract.yml`](.github/workflows/contract.yml).

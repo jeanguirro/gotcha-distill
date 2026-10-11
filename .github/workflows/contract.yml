@@ -49,8 +49,12 @@ jobs:
           tmp="$(mktemp -d)"
           git init -q "$tmp"
           bash scripts/install.sh "$tmp"
+          (cd "$tmp" && python3 scripts/gen-llms-txt.py && python3 scripts/assert-agent-workflow.py)
+          test -f "$tmp/gotcha.toml"
+          snap="$(cd "$tmp" && find . -path ./.git -prune -o -type f -exec cksum {} + | sort)"
           bash scripts/install.sh "$tmp"
-          (cd "$tmp" && python3 scripts/assert-agent-workflow.py)
+          test "$snap" = "$(cd "$tmp" && find . -path ./.git -prune -o -type f -exec cksum {} + | sort)"
+          (cd "$tmp" && python3 scripts/gen-llms-txt.py --check && python3 scripts/assert-agent-workflow.py)
 
       - name: install.sh --copy produces identical copies the contract accepts
         run: |

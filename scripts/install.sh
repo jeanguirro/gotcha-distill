@@ -11,8 +11,9 @@
 #   --tools   comma-separated list of agent tools to wire up (default: claude)
 #   --copy    copy the skill into each tool directory instead of symlinking
 #             (for Windows checkouts or tools that do not follow symlinks)
-#   --force   overwrite an existing skill directory and contract script
-#             (docs/gotchas/ and docs/postmortems/ are never overwritten)
+#   --force   overwrite an existing skill directory, contract script and
+#             llms.txt generator (gotcha.toml, docs/gotchas/ and
+#             docs/postmortems/ are never overwritten)
 #
 # Idempotent: re-running reports what already exists and changes nothing else.
 set -euo pipefail
@@ -35,8 +36,9 @@ default; name the others only for tool versions that predate .agents/skills.
   --tools   comma-separated list of agent tools to wire up (default: claude)
   --copy    copy the skill into each tool directory instead of symlinking
             (for Windows checkouts or tools that do not follow symlinks)
-  --force   overwrite an existing skill directory and contract script
-            (docs/gotchas/ and docs/postmortems/ are never overwritten)
+  --force   overwrite an existing skill directory, contract script and
+            llms.txt generator (gotcha.toml, docs/gotchas/ and
+            docs/postmortems/ are never overwritten)
 
 Idempotent: re-running reports what already exists and changes nothing else.
 EOF
@@ -81,6 +83,40 @@ else
   cp "$SRC/scripts/assert-agent-workflow.py" "$dst"
   chmod +x "$dst"
   log installed "scripts/assert-agent-workflow.py"
+fi
+
+# ---- llms.txt generator ----------------------------------------------------
+# Domain-file front matter (domain, triggers, updated) is explained only by
+# this script, so a repo with the contract needs it too.
+dst="$TARGET/scripts/gen-llms-txt.py"
+if [ -f "$dst" ] && [ "$FORCE" -eq 0 ]; then
+  log exists "scripts/gen-llms-txt.py (use --force to overwrite)"
+else
+  mkdir -p "$TARGET/scripts"
+  cp "$SRC/scripts/gen-llms-txt.py" "$dst"
+  chmod +x "$dst"
+  log installed "scripts/gen-llms-txt.py"
+fi
+
+# ---- gotcha.toml: written only when absent, never overwritten --------------
+dst="$TARGET/gotcha.toml"
+if [ -e "$dst" ]; then
+  log exists "gotcha.toml"
+else
+  name="$(basename "$TARGET")"
+  name="${name//\\/\\\\}"
+  name="${name//\"/\\\"}"
+  {
+    echo "# Layout and project name for scripts/assert-agent-workflow.py and"
+    echo "# scripts/gen-llms-txt.py. Every other key is optional; see the README."
+    echo
+    echo "[project]"
+    echo "# Used as the llms.txt H1. Set this explicitly: it defaults here to the"
+    echo "# directory name, and a CI checkout can be named differently, which would"
+    echo "# make the generated llms.txt differ between machines and fail its drift check."
+    echo "name = \"$name\""
+  } > "$dst"
+  log created "gotcha.toml (set [project] name explicitly)"
 fi
 
 # ---- docs scaffolding: never overwritten -----------------------------------
@@ -205,4 +241,4 @@ case ",$TOOLS," in
 esac
 
 echo
-echo "done. next: cd $TARGET && python3 scripts/assert-agent-workflow.py"
+echo "done. next: cd $TARGET && python3 scripts/gen-llms-txt.py && python3 scripts/assert-agent-workflow.py"

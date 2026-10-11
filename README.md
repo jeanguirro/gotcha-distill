@@ -384,10 +384,14 @@ bash gotcha-distill/scripts/install.sh /path/to/your/repo
 ```
 
 `install.sh` copies the skill to `.agents/skills/gotcha-distill/`, the
-contract to `scripts/`, and the two `README.md` files under `docs/`; creates
+contract and `gen-llms-txt.py` to `scripts/`, and the two `README.md` files
+under `docs/`; writes a `gotcha.toml` (project name = the directory name; set
+it explicitly, since CI checkout names can differ) only if none exists; creates
 or appends the `## Environment gotchas` section in `AGENTS.md`; and bridges
 Claude Code to the canonical skill. It never overwrites an existing
-`docs/gotchas/` or `docs/postmortems/` file, and is safe to re-run.
+`gotcha.toml`, `docs/gotchas/` or `docs/postmortems/` file, and is safe to
+re-run. Afterwards, run `python3 scripts/gen-llms-txt.py` to generate
+`llms.txt` from your domain files' front matter, then the contract.
 
 ```
 usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--copy] [--force]
@@ -400,8 +404,8 @@ usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]]
   use it on Windows checkouts without `core.symlinks`, or if your tool's
   skill loader does not follow symlinks. The contract asserts every copy is
   byte-identical to the canonical one, so drift is caught.
-- `--force` overwrites an existing skill directory and contract script
-  (never the docs).
+- `--force` overwrites an existing skill directory, contract script and
+  `gen-llms-txt.py` (never `gotcha.toml` or the docs).
 
 ### Option C — by hand
 

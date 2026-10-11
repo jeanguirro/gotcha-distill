@@ -48,7 +48,7 @@ def anchor(title: str) -> str:
     slug = title.lower()
     slug = slug.replace("—", "").replace("–", "")
     slug = re.sub(r"[^\w\s-]", "", slug)
-    return re.sub(r"[\s_]+", "-", slug.strip()).strip("-")
+    return re.sub(r"\s+", "-", slug.strip()).strip("-")
 
 
 def render(root: Path, cfg: contract.Config) -> str:
@@ -108,7 +108,7 @@ def render(root: Path, cfg: contract.Config) -> str:
         f"> {GENERATED_NOTE}",
         "",
     ]
-    return "\n".join(header + ["\n".join(sections)] + ([""] + optional if optional else [])).rstrip() + "\n"
+    return "\n".join(header + ["\n\n".join(sections)] + ([""] + optional if optional else [])).rstrip() + "\n"
 
 
 def main() -> int:

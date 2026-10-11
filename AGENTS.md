@@ -53,6 +53,7 @@ load the `gotcha-distill` skill for the full procedure.
 
 ## Documentation map
 
+- `docs/ROADMAP.md` — milestones and `- [ ]` work items; tick an item in the commit that delivers it.
 - `docs/gotchas/` — lazy-loaded lessons, one file per domain.
 - `docs/postmortems/` — one file per production incident, written once.
 - `.agents/skills/gotcha-distill/SKILL.md` — how to add a gotcha.

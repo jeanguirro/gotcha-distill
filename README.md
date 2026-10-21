@@ -7,8 +7,10 @@ lazily-loaded repository knowledge. **A fix is not done until its lesson is
 durable** — written where the next agent will find it, cheap enough to keep in
 context forever, and asserted by CI so it cannot drift.
 
-Works with Claude Code, OpenCode, Cursor, and Codex from a single source of
-truth. Stdlib Python, one shell script, no dependencies.
+Ships one skill and one contract that any agent-standards tool can load from
+`.agents/skills/` (Codex, Cursor and OpenCode read it natively; Claude Code
+loads it through a `.claude/skills` bridge — see "Option C"). Stdlib Python,
+one shell script, no dependencies.
 
 ```
 fix the bug
@@ -37,16 +39,20 @@ frequencies:
 
 | Level | Content | When loaded | Cost per lesson |
 |-------|---------|-------------|-----------------|
-| 1 | One bullet in `AGENTS.md` under a `### <Domain> — read <file> when touching <triggers>` heading | Every session, always | ~15 tokens |
+| 1 | One bullet in `AGENTS.md` under a `### <Domain> — read <file> when touching <triggers>` heading | Every session, always | ~15 tokens (marginal; plus the fixed skill-description cost, see note) |
 | 2 | `SKILL.md` — how to write a lesson | Only when an agent has just fixed something | ~1,500 tokens, once per distillation |
 | 3 | `docs/gotchas/<domain>.md` — the full entry | Only when the task touches that domain's trigger | ~150–300 tokens, only the relevant domain |
 
-One private repository of the author's has run this pattern since its first
-incident. Measured on 2026-09-22: 80 asserted gotchas, 5.3 KB of always-loaded
-index (about 54 characters per lesson), 61 KB across its four domain files —
-an 11.5:1 ratio between what every session pays and what a task actually
-reads. The agent knows *that* eighty hazards exist and *which file* to open
-for the domain it is about to touch.
+One private repository of the author's — the `photos_backup` service — has run
+this pattern since its first incident. Measured on 2026-10-22: 81 asserted
+gotchas, a 5.4 KB always-loaded index, and 62 KB across its four domain files
+— about 66 bytes (~17 tokens) of always-loaded cost per lesson, and an ~11.5:1
+ratio between what every session pays and what a task actually reads. The
+agent knows *that* the hazards exist and *which file* to open for the domain it
+is about to touch. The `~15 tokens` above is the marginal cost of one more
+bullet; the skill's own `description` is a fixed ~200-character always-loaded
+cost on top of it, which is why the description is budgeted (see "The
+contract").
 
 ### 2. Re-litigation
 
@@ -311,13 +317,13 @@ in IAM.
 
 ## The contract
 
-`scripts/assert-agent-workflow.py` is stdlib Python (3.11+, for `tomllib`), about 500 lines
+`scripts/assert-agent-workflow.py` is stdlib Python (3.11+, for `tomllib`), 576 lines
 including its selftest, and asserts:
 
 | # | Check | Direction |
 |---|-------|-----------|
 | 1 | `AGENTS.md` exists and carries a `## Environment gotchas` section | precondition |
-| 2 | Every `### … \`docs/gotchas/<file>.md\` …` heading names a file that exists **and carries a `when touching …` trigger clause** | index → disk, routing |
+| 2 | Every `### … \`docs/gotchas/<file>.md\` …` heading names a file that exists (under the configured gotchas directory, not just any path) **and carries a `when touching …` trigger clause specific enough to route** — a backticked path/glob, or at least three words | index → disk, routing |
 | 3 | Every index bullet has an identical `##` title in its domain file | index → file |
 | 4 | Every `##` title in a referenced domain file has an identical index bullet | file → index |
 | 5 | No duplicate titles on either side, per domain; no domain declared twice | uniqueness |
@@ -325,13 +331,17 @@ including its selftest, and asserts:
 | 7 | No bullet appears in the section before the first domain heading | shape |
 | 8 | Every `docs/postmortems/<file>.md` cited in a domain file exists | file → disk |
 | 9 | Every entry carries a `YYYY-MM-DD` date (`--no-require-dates` while backfilling a legacy repo) | entry shape |
-| 10 | Every copy of `SKILL.md` has `name: gotcha-distill` (or `--skill-name`) and a single-line description ≤ 512 chars, and all copies are byte-identical | skill |
+| 10 | Every copy of `SKILL.md` has `name: gotcha-distill` (or `--skill-name`) and a single-line description ≤ 250 chars, and all copies are byte-identical | skill |
+| 11 | Every domain file opens with `domain`/`triggers`/`updated` front matter | disk → generator |
+| 12 | Every entry states what it cost — only when the repo opts in via `[index] require_cost` (or `--require-cost`) | entry shape |
 
-Check 2 is the one the whole design rests on: a heading without a trigger
-clause is consistent, present, and never read. Check 9 is the mechanical
-half of "gotchas are incident-born" — it cannot tell an incident from an
-opinion, but it makes writing an opinion require a deliberate lie rather than
-mere laziness.
+Check 2 is the one the whole design rests on: a heading whose trigger cannot
+match a real task is consistent, present, and never read — which is why the
+contract rejects both a missing clause and a trivial one (`when touching
+stuff`). Checks 9 and 12 are the mechanical halves of "gotchas are
+incident-born" — they cannot tell an incident from an opinion, but together
+they make writing an opinion require a deliberate lie rather than mere
+laziness.
 
 An index line may carry a trailing `(annotation)` that the title does not —
 `(do not re-investigate)` is the common one. The exact form is tried first,
@@ -339,29 +349,33 @@ so a title that legitimately ends in a parenthetical (`(staging only)`,
 `(GKE 1.30+)`) compares literally. HTML comments and fenced code blocks are
 ignored, so `AGENTS.md` can carry an example heading without declaring a
 domain. Files may be CRLF or carry a UTF-8 BOM; the selftest covers both. The
-512-character description ceiling is a deliberate always-loaded budget, not a
-vendor limit (Claude Code truncates `description` + `when_to_use` at 1,536).
+250-character description ceiling is a deliberate always-loaded budget, not a
+vendor limit: Claude Code budget-scales per-skill listing descriptions and
+truncates long ones in a busy multi-skill session (its hard ceiling for
+`description` + `when_to_use` is 1,536), so 250 keeps the whole description —
+trigger words included — intact.
 
-The count in the index preamble ("80 gotchas") is deliberately **not**
+The count in the index preamble ("81 gotchas") is deliberately **not**
 asserted. Counts drift harmlessly; parity does not. Asserting the count would
 make every distillation a two-file edit for no safety gain.
 
 ### Proof of failure
 
 `--selftest` builds a synthetic repository in a temp directory (three times:
-LF, CRLF, and with a BOM), asserts the contract holds, then applies nineteen
+LF, CRLF, and with a BOM), asserts the contract holds, then applies twenty
 named mutations — an index line with no entry, an entry with no index line,
 a deleted domain file, an orphan file, a duplicate on each side, a domain
-declared twice, a heading with no trigger clause, a bullet outside any
-domain, a removed section, missing front matter, a malformed front-matter
-date, a dangling postmortem link, an undated entry, a renamed skill, a
-bloated description, a folded description, a drifted skill copy, a missing
-skill — and asserts each one trips the expected check. A
-check that cannot be shown to fail is not a check.
+declared twice, a heading with no trigger clause, a heading with a trivial
+trigger clause, a bullet outside any domain, a removed section, missing front
+matter, a malformed front-matter date, a dangling postmortem link, an undated
+entry, a renamed skill, a bloated description, a folded description, a
+drifted skill copy, a missing skill — and asserts each one trips the expected
+check. It also proves the opt-in cost check and the configurable gotchas path
+the same way. A check that cannot be shown to fail is not a check.
 
 ```
 $ python3 scripts/assert-agent-workflow.py --selftest
-selftest OK (19 mutations each trip their check).
+selftest OK (20 mutations each trip their check).
 ```
 
 CI runs both. See [`.github/workflows/contract.yml`](.github/workflows/contract.yml).
@@ -410,11 +424,13 @@ usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]]
 ### Option C — by hand
 
 One canonical copy in `.agents/skills/`. Who reads what, per current vendor
-documentation:
+documentation (verified against Codex and Claude Code docs at the time of
+writing; Cursor and OpenCode follow the same agent-skills convention but are
+not exercised by this repository's CI):
 
 | Tool | Reads skills from | Needs a bridge? | Always-loaded contract |
 |------|-------------------|-----------------|------------------------|
-| Codex | `.agents/skills/` | No | `AGENTS.md` |
+| Codex | `.agents/skills/` (follows symlinks) | No | `AGENTS.md` |
 | Cursor | `.agents/skills/`, `.cursor/skills/`, `.claude/skills/` | No | `AGENTS.md` |
 | OpenCode | `.opencode/skills/`, `.claude/skills/`, `.agents/skills/` | No | `AGENTS.md` |
 | Claude Code | `.claude/skills/` only | **Yes** | `CLAUDE.md` |
@@ -428,13 +444,14 @@ ln -s AGENTS.md CLAUDE.md
 ```
 
 Commit the symlinks as symlinks (git mode `120000`). The CI workflow in this
-repository includes a step that fails if a checkout with `core.symlinks=false`
-turned them into regular files. If your team already has a `CLAUDE.md` with
-content, keep it and add a line pointing at `AGENTS.md` instead of replacing
-it. Cursor has had reports of symlinked skill directories being filtered out
-when the resolved path escapes the project root; since Cursor reads
-`.agents/skills/` directly, do not add a `.cursor/skills` link at all — or
-use `--copy` if you must.
+repository asserts the working-tree entries are still symlinks (`test -L`), so
+a checkout that dereferenced them into regular files — e.g. one cloned with
+`core.symlinks=false` — fails the build. If your team already has a `CLAUDE.md`
+with content, keep it and add a line pointing at `AGENTS.md` instead of
+replacing it. Cursor has had reports of symlinked skill directories being
+filtered out when the resolved path escapes the project root; since Cursor
+reads `.agents/skills/` directly, do not add a `.cursor/skills` link at all —
+or use `--copy` if you must.
 
 Then add the two contract commands to CI:
 
@@ -462,11 +479,12 @@ gotchas     = "docs/gotchas"
 postmortems = "docs/postmortems"
 
 [index]
-heading = "## Environment gotchas"
+heading      = "## Environment gotchas"
+require_cost = true   # assert every entry states what it cost
 
 [skill]
 name                  = "gotcha-distill"
-description_max_chars = 512
+description_max_chars = 250
 ```
 
 ## llms.txt

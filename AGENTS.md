@@ -1,9 +1,9 @@
 # AGENTS.md — agent contract
 
-<!-- Replace this paragraph with two or three lines on what this repository
-     is and the commands an agent needs (build, test, deploy). Keep the two
-     sections below: the rules and the gotcha trigger index are what the
-     gotcha-distill skill and scripts/assert-agent-workflow.py depend on. -->
+This repository is the `gotcha-distill` skill and its contract — the
+reference implementation of the incident-to-lesson loop. Verify with
+`python3 scripts/assert-agent-workflow.py --selftest` and
+`python3 scripts/assert-agent-workflow.py`; there is no build or deploy step.
 
 This file is read by every coding agent at session start, regardless of
 vendor (Claude Code reads it via the `CLAUDE.md` symlink; Cursor, Codex and

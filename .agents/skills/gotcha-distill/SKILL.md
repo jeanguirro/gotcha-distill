@@ -1,6 +1,6 @@
 ---
 name: gotcha-distill
-description: Distill a bug, near-miss, or incident into durable repo knowledge — a postmortem if it reached production, a gotcha entry in docs/gotchas/<domain>.md, and its one-line trigger in AGENTS.md. Use after fixing any non-trivial bug, after a near-miss, whenever you re-investigated something already settled, or after any production incident, so every future agent loads the lesson.
+description: Use after fixing a non-trivial bug, after a near-miss, or after any production incident: distill the lesson into docs/gotchas/<domain>.md and its one-line AGENTS.md index, plus a postmortem if it reached production.
 license: MIT
 compatibility: claude-code, opencode, cursor, codex
 metadata:
@@ -56,9 +56,11 @@ can match to their task is a line nobody loads.
    The entry is one `## <title>` heading followed by a single paragraph:
    a bold restatement of the title, the date in parentheses, what it cost,
    the mechanism, the fix, the rule that generalizes, and every file involved
-   in backticks. If the domain has no file yet, create it (copy the preamble
-   shape from an existing one) — a new domain is a new file **and** a new
-   `###` heading in the index, in the same commit.
+   in backticks. The contract asserts the date (always) and the stated cost
+   (when the repo opts in via `[index] require_cost`) — an entry that cannot
+   name a cost is an opinion, not a lesson. If the domain has no file yet,
+   create it (copy the preamble shape from an existing one) — a new domain is
+   a new file **and** a new `###` heading in the index, in the same commit.
 
 3. **Add the index line** to `AGENTS.md` under
    `## Environment gotchas — trigger index`, beneath the matching
@@ -68,7 +70,9 @@ can match to their task is a line nobody loads.
    parenthetical such as `(do not re-investigate)` is permitted on the index
    line as a hint the title does not carry. The heading's `when touching …`
    clause is also asserted: it is the routing, and a heading without one is
-   a lesson nobody loads.
+   a lesson nobody loads. Make it concrete — a backticked path/glob, or at
+   least three words — because `when touching stuff` routes nothing and the
+   contract rejects it.
 
 4. **Validate predicates against a real captured sample** before they ship —
    this includes any regex over error text, log lines, or CLI output that

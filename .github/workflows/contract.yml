@@ -31,13 +31,15 @@ jobs:
       - name: llms.txt matches a fresh generation
         run: python3 scripts/gen-llms-txt.py --check
 
-      - name: symlinks are committed as symlinks (mode 120000)
+      - name: symlinks resolve in the working tree (not dereferenced to files)
         run: |
+          # Assert the working tree, not `git ls-files -s`: the latter reads the
+          # index, so a `core.symlinks=false` checkout that dereferences the
+          # links into regular files would pass it. Only `test -L` catches that.
           bad=0
           for p in .claude/skills CLAUDE.md; do
-            mode="$(git ls-files -s -- "$p" | awk '{print $1}')"
-            if [ "$mode" != "120000" ]; then
-              echo "::error::$p is tracked with mode ${mode:-<untracked>}, expected 120000 (symlink)"
+            if [ ! -L "$p" ]; then
+              echo "::error::$p is not a symlink in the working tree"
               bad=1
             fi
           done

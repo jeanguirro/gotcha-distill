@@ -20,6 +20,11 @@ here plus its `###` trigger heading in `AGENTS.md`, in the same commit.
   that generalises beyond this instance>.
 ```
 
+If quantities are unknown, use `Cost: unmeasured` and describe the observed
+impact or prevented failure. The opt-in cost check recognizes syntax, not
+verified impact. New domain files need YAML frontmatter with `domain`,
+`triggers`, and `updated: YYYY-MM-DD`; quote values containing `: `.
+
 One paragraph. No sub-headings, no bullet lists inside an entry. Continuation
 lines are indented two spaces so the paragraph reads as a block. The title —
 and therefore its index line in `AGENTS.md` — must fit on one line; the

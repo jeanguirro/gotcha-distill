@@ -1,130 +1,110 @@
 ---
 name: gotcha-distill
-description: Use after fixing a non-trivial bug, after a near-miss, or after any production incident: distill the lesson into docs/gotchas/<domain>.md and its one-line AGENTS.md index, plus a postmortem if it reached production.
+description: "Distill a fixed bug, near-miss, or production incident: record the reusable lesson, add its trigger index, and check parity. Use when an investigation reveals a repository-specific hazard; skip routine edits and style preferences."
 license: MIT
-compatibility: claude-code, opencode, cursor, codex
 metadata:
   audience: all agents
   workflow: self-improvement
 ---
 
-# Gotcha distillation — the repository's self-improvement loop
+# Gotcha distillation
 
-Every entry in `docs/gotchas/` was forged by something breaking, and is the
-reason the next agent does not break it again. This skill makes that loop
-repeatable and enforceable: **a fix is not done until its lesson is durable,
-findable, and asserted.**
+Turn an observed failure into a lesson a future agent can find before repeating
+it. Keep the always-loaded index short; load the relevant domain file when a
+task matches its trigger. The contract checks structure, not whether a lesson
+is true or whether another agent will use it.
 
-## Progressive disclosure — three levels
+## Locate the lesson
 
-The pattern exists to keep lessons out of the always-loaded context until the
-moment they are needed. Each level costs more tokens and is loaded less often.
+Read `gotcha.toml` if present. Use its `[paths] contract`, `gotchas`, and
+`postmortems` and `[index] heading`; the defaults below are `AGENTS.md`,
+`docs/gotchas`, `docs/postmortems`, and `## Environment gotchas`.
 
-| Level | Where | Loaded | Cost per lesson |
-|-------|-------|--------|-----------------|
-| 1 | `AGENTS.md` → `## Environment gotchas` trigger index, plus this skill's `name`/`description` frontmatter | Always, every session | ~15 tokens (one bullet) |
-| 2 | This `SKILL.md` body | Only when the skill triggers (you just fixed something) | ~1,500 tokens, once per distillation |
-| 3 | `docs/gotchas/<domain>.md` | Only when a task touches that domain's trigger ("when touching `infra/`…") | ~150–300 tokens per entry, only for the relevant domain |
+Read the relevant index heading and domain file before writing. Extend an
+existing entry if it covers the same mechanism; add a new entry only for a
+distinct hazard. A repeated investigation may mean the trigger needs repair,
+not that another lesson is needed. Skip routine fixes and preferences that
+have no reusable, repository-specific lesson.
 
-Compare with the alternative: re-investigating a settled question costs
-thousands of tokens of exploration, plus the risk of repeating the incident.
-The index line is the cheapest possible pointer to the most expensive possible
-lesson. **Level 1 must therefore carry the trigger** — an index line nobody
-can match to their task is a line nobody loads.
+## Record the evidence
 
-## When to use me
+If the incident reached production, use the repository's existing incident
+review location and template. Otherwise use `docs/postmortems/YYYY-MM-DD-<slug>.md`
+and the guidance in that directory's README. If neither exists, create a
+short review with the observed impact, timeline, cause, fix, and unresolved
+follow-ups. Cite it from the lesson. A near-miss needs no production postmortem.
 
-- You fixed a non-trivial bug, or nearly caused one. A near-miss counts.
-- You spent real time investigating something that had already been settled.
-  That means a gotcha was missing or unfindable — which is itself the bug.
-  Distill it now, or extend the existing entry with why it was unfindable.
-- Any production incident. Then the postmortem in step 1 is mandatory.
+Separate observed facts from hypotheses. Record the actual incident date;
+if unknown, label the date as the recording date. State measured cost when
+available. Otherwise write `Cost: unmeasured` and describe the observed impact
+or prevented failure. Never invent duration, money, or production impact to
+satisfy the contract.
 
-## Steps, in order
+If the fix introduces a predicate over machine-generated text, check it
+against a captured sample without committing that output. Commit synthesized
+fixtures with inert values that preserve the relevant structure. Keep secrets
+and personal data out of lessons and postmortems too.
 
-1. **Classify.** Production incident → write
-   `docs/postmortems/YYYY-MM-DD-<slug>.md` first, following
-   `docs/postmortems/README.md`. If that directory does not exist yet, create
-   it and a README that states what belongs there (the gotcha-distill
-   template ships one). If the repository already has an incident-review
-   home (an RCA directory, an SRE template set), write there instead and
-   cite that path from the entry — do not create a competing second home,
-   and do not park the narrative in a handoff note and forget it.
-   Everything that did not reach production starts at step 2.
+## Write and index
 
-2. **Distill the gotcha** into the matching domain file under `docs/gotchas/`.
-   The entry is one `## <title>` heading followed by a single paragraph:
-   a bold restatement of the title, the date in parentheses, what it cost,
-   the mechanism, the fix, the rule that generalizes, and every file involved
-   in backticks. The contract asserts the date (always) and the stated cost
-   (when the repo opts in via `[index] require_cost`) — an entry that cannot
-   name a cost is an opinion, not a lesson. If the domain has no file yet,
-   create it (copy the preamble shape from an existing one) — a new domain is
-   a new file **and** a new `###` heading in the index, in the same commit.
+In the matching domain file, use one `## <title>` followed by one paragraph:
+bold restatement, date, cost or impact, mechanism, fix, and the rule that
+applies next time. Cite relevant file paths in backticks. Keep a long incident
+narrative in the postmortem.
 
-3. **Add the index line** to `AGENTS.md` under
-   `## Environment gotchas — trigger index`, beneath the matching
-   `### <Domain> — read \`docs/gotchas/<file>.md\` when touching <triggers>`
-   heading. The bullet text **must equal the `##` title in the domain file
-   exactly** — the contract asserts this, both directions. A trailing
-   parenthetical such as `(do not re-investigate)` is permitted on the index
-   line as a hint the title does not carry. The heading's `when touching …`
-   clause is also asserted: it is the routing, and a heading without one is
-   a lesson nobody loads. Make it concrete — a backticked path/glob, or at
-   least three words — because `when touching stuff` routes nothing and the
-   contract rejects it.
-
-4. **Validate predicates against a real captured sample** before they ship —
-   this includes any regex over error text, log lines, or CLI output that
-   the fix introduced (AGENTS.md rule 2). Never paste live output into the
-   entry or the fixture (rule 1): synthesize the sample with inert
-   placeholders and assert on structure, not on values.
-
-5. **Run the contract:** `python3 scripts/assert-agent-workflow.py`. It
-   asserts index ↔ file parity for every domain, flags orphan files and
-   duplicate titles, and checks this skill's frontmatter. If you changed the
-   script itself, also run `--selftest`.
-
-6. **Commit the gotcha with the code that forged it**, in the same commit.
-   Docs travel with the change they describe; a lesson that lands in a later
-   "docs" commit is a lesson that can be reverted, cherry-picked away, or
-   never merged.
-
-## Entry anatomy
-
-The index line (Level 1):
+For a new domain, include this frontmatter and add its index heading. Update
+`updated` whenever its lessons change. Quote YAML values containing `: `.
 
 ```markdown
-### Infra & AWS — read `docs/gotchas/infra-aws.md` when touching `infra/`, deploy workflows, artifact buckets, or cross-account IAM
-- Cross-account S3 answers 403 not 404 for a missing key
+---
+domain: Build tooling
+triggers: scripts/, release workflows
+updated: 2026-01-01
+---
+
+# Gotchas — build tooling
+
+## Check the artifact before updating release configuration
+
+**Check the artifact before changing release configuration** (2026-01-01).
+Cost: unmeasured; a test deploy exposed mismatched code and configuration.
+`scripts/deploy.sh` updated configuration before fetching the archive; a
+failed fetch left the old code running. Fetch and validate the archive first,
+and retain rollback handling for failures during later mutations.
 ```
 
-The entry it points to (Level 3, in `docs/gotchas/infra-aws.md`):
+This is a synthetic example; replace its date, impact, and paths with evidence
+from the actual fix.
+
+Under the configured index section, add a domain heading and a bullet:
 
 ```markdown
-## Cross-account S3 answers 403 not 404 for a missing key
-
-**A cross-account `HeadObject`/`GetObject` on a key that does not exist
-  returns 403 Forbidden, not 404** (2026-09-14, cost a 35-minute IAM detour
-  and one half-applied production deploy): S3 only discloses "not found" to
-  callers holding `s3:ListBucket` on the bucket. [...mechanism, fix, rule,
-  files...]
+### Build tooling — read `docs/gotchas/build.md` when touching `scripts/` or release workflows
+- Check the artifact before updating release configuration
 ```
 
-Title is the rule, stated as a fact. Paragraph opens with a bold restatement,
-carries the date and the cost, and ends with the generalizing rule and the
-files. No sub-headings, no bullet lists inside the entry.
+The bullet must equal the entry's `##` title exactly and fit on one line.
+A trailing parenthetical such as `(do not re-investigate)` may be an index
+hint. It is a pointer to evidence, not a reason to ignore changed conditions.
 
-## Anti-patterns — do not
+Use the configured domain directory in the heading. Make its `when touching`
+clause concrete: a complete backticked path/glob such as `scripts/` or `*.tf`,
+or a descriptive phrase of at least three words. That syntax floor cannot
+judge relevance; choose triggers that match the tasks affected by the hazard.
 
-- Write a gotcha with no trigger condition. The `###` heading's "when
-  touching …" clause is what routes a future task to the file.
-- Re-litigate a settled question. If a `(do not re-investigate)` line exists,
-  extend it with the new evidence or leave it alone.
-- Distill a style preference as a gotcha. Gotchas are incident-born; the bar
-  is "this cost production or a near-miss", not "I would have written it
-  differently".
-- Treat the count in the index preamble as asserted. It is hand-kept.
-  What the contract asserts is parity: every line has its entry, every entry
-  has its line.
-- Land the gotcha in a separate commit from the fix.
+## Validate and deliver
+
+Run `python3 scripts/assert-agent-workflow.py` from the repository root.
+It checks index/file parity, routing syntax, duplicates, orphan files, dates,
+configured postmortem references, and skill-copy consistency. When enabled,
+`[index] require_cost` checks cost syntax; it does not verify the impact.
+A production review kept outside the configured postmortem directory needs
+its link checked separately.
+
+If the contract changed, also run `--selftest`. If the repository maintains
+`llms.txt`, run `python3 scripts/gen-llms-txt.py` and its `--check` mode. Run
+any additional checks required by the repository.
+
+Keep the fix, lesson, index, and generated documentation together for review
+and the same eventual commit. Commit when authorized by the user's workflow.
+Report the lesson added or updated, checks run, and any missing evidence.

@@ -5,6 +5,8 @@ Read-only: it never writes to the repositories it inspects. For each sibling
 directory under --fleet-root that carries the canonical contract
 (scripts/assert-agent-workflow.py), it reports volume, contract health, token
 economics, provenance and skill drift, as a table or --json.
+Cost signals are syntax heuristics, not verified impact. Index tokens are
+estimated as bytes / 4; the ratio compares all domain bytes with index bytes.
 
 Two contract results are reported per repo, because the fleet is not uniform:
 
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -35,11 +38,14 @@ CANONICAL_ASSERT = HERE / "assert-agent-workflow.py"
 CANONICAL_SKILL = REPO / ".agents" / "skills" / "gotcha-distill" / "SKILL.md"
 CONTRACT_NAME = "assert-agent-workflow.py"
 
-DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_spec = importlib.util.spec_from_file_location("contract", CANONICAL_ASSERT)
+contract = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None
+sys.modules["contract"] = contract
+_spec.loader.exec_module(contract)
+
+DATE_RE = contract.DATE_RE
 MONTH_RE = re.compile(r"\b(\d{4}-\d{2})-\d{2}\b")
-COST_RE = re.compile(r"\b(cost|minute|hour|day|outage|downtime)\b|\$\d+", re.IGNORECASE)
-GOTCHAS_DIR = Path("docs/gotchas")
-POSTMORTEMS_DIR = Path("docs/postmortems")
 
 
 def read_text(path: Path) -> str:
@@ -50,15 +56,15 @@ def skill_md5(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()[:8] if path.is_file() else "-"
 
 
-def gotcha_index_bytes(agents_path: Path) -> int:
+def gotcha_index_bytes(agents_path: Path, heading: str = contract.SECTION_PREFIX) -> int:
     """Bytes of the always-loaded gotcha trigger index in AGENTS.md."""
     out: list[str] = []
     in_section = False
     for line in read_text(agents_path).splitlines():
-        if line.startswith("## Environment gotchas"):
+        if line.startswith(heading):
             in_section = True
             continue
-        if in_section and re.match(r"^## ", line):
+        if in_section and contract.SECTION_CLOSE_RE.match(line):
             break
         if in_section:
             out.append(line)
@@ -81,9 +87,10 @@ def contract_result(script: Path, repo: Path) -> str:
 
 
 def scan(repo: Path) -> dict:
-    agents = repo / "AGENTS.md"
-    gotchas = repo / GOTCHAS_DIR
-    postmortems = repo / POSTMORTEMS_DIR
+    cfg = contract.load_config(repo)
+    agents = repo / cfg.contract
+    gotchas = repo / cfg.gotchas
+    postmortems = repo / cfg.postmortems
 
     entries: list[tuple[str, str]] = []  # (title, body)
     domain_files = 0
@@ -95,31 +102,20 @@ def scan(repo: Path) -> dict:
         domain_files += 1
         text = read_text(f)
         lazy_bytes += len(text.encode("utf-8"))
-        current: str | None = None
-        body: list[str] = []
-        for line in text.splitlines():
-            if line.startswith("## "):
-                if current is not None:
-                    entries.append((current, "\n".join(body)))
-                current = line[3:].strip()
-                body = []
-            elif current is not None:
-                body.append(line)
-        if current is not None:
-            entries.append((current, "\n".join(body)))
+        entries.extend(contract.parse_entries(text))
         for m in MONTH_RE.finditer(text):
             months[m.group(1)] = months.get(m.group(1), 0) + 1
 
     dated = sum(1 for _, body in entries if DATE_RE.search(body))
-    costed = sum(1 for _, body in entries if COST_RE.search(body))
+    cost_signals = sum(1 for _, body in entries if contract.COST_RE.search(body))
     reinc = read_text(agents).count("do not re-investigate")
-    index_bytes = gotcha_index_bytes(agents)
+    index_bytes = gotcha_index_bytes(agents, cfg.heading)
     ratio = round(lazy_bytes / index_bytes, 1) if index_bytes else 0.0
 
-    skill = repo / ".agents" / "skills" / "gotcha-distill" / "SKILL.md"
+    skill = repo / ".agents" / "skills" / cfg.skill_name / "SKILL.md"
     if not skill.is_file():
-        for alt in (".claude", ".opencode"):
-            candidate = repo / alt / "skills" / "gotcha-distill" / "SKILL.md"
+        for alt in (".claude", ".opencode", ".cursor"):
+            candidate = repo / alt / "skills" / cfg.skill_name / "SKILL.md"
             if candidate.is_file():
                 skill = candidate
                 break
@@ -140,7 +136,7 @@ def scan(repo: Path) -> dict:
         "lazy_bytes": lazy_bytes,
         "ratio": ratio,
         "dated": dated,
-        "costed": costed,
+        "cost_signals": cost_signals,
         "do_not_reinvestigate": reinc,
         "skill_md5": skill_md5(skill),
         "skill_drift": skill_md5(skill) != canonical_md5,
@@ -153,14 +149,14 @@ def scan(repo: Path) -> dict:
 def render_table(rows: list[dict]) -> str:
     head = (
         "repo               gotchas domains pm  index   idxTok lazy    ratio "
-        "dated costed rinv  skill   self       canonical"
+        "dated costSig rinv  skill   self       canonical"
     )
     out = [head, "-" * len(head)]
     for r in rows:
         out.append(
             f"{r['name']:<18} {r['gotchas']:>7} {r['domain_files']:>6} {r['postmortems']:>3} "
             f"{r['index_bytes']:>5}B {r['index_tokens']:>5} {r['lazy_bytes']:>5}B "
-            f"{r['ratio']:>6} {r['dated']:>5} {r['costed']:>6} {r['do_not_reinvestigate']:>4} "
+            f"{r['ratio']:>6} {r['dated']:>5} {r['cost_signals']:>7} {r['do_not_reinvestigate']:>4} "
             f"{r['skill_md5']:>8} {r['self']:<10} {r['canonical']}"
         )
     return "\n".join(out)
@@ -181,7 +177,7 @@ def main() -> int:
             continue
         if not (child / "scripts" / CONTRACT_NAME).is_file():
             continue
-        if not (child / "AGENTS.md").is_file():
+        if not (child / contract.load_config(child).contract).is_file():
             continue
         rows.append(scan(child))
 

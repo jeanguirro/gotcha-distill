@@ -103,8 +103,8 @@ def render(root: Path, cfg: contract.Config) -> str:
         f"# {cfg.name or root.name} — gotchas",
         "",
         f"> {total} gotchas across {len(index)} domain "
-        f"{'file' if len(index) == 1 else 'files'}, each earned by a break or a near-miss.",
-        f"> Every entry is indexed in {cfg.contract} and loaded only when its trigger matches.",
+        f"{'file' if len(index) == 1 else 'files'}.",
+        f"> Entries are indexed in {cfg.contract}; read the domain file when its trigger matches.",
         f"> {GENERATED_NOTE}",
         "",
     ]

@@ -54,11 +54,17 @@ from typing import Callable, Iterator
 SECTION_PREFIX = "## Environment gotchas"
 SECTION_CLOSE_RE = re.compile(r"^#{1,2} ")
 ANNOTATION_RE = re.compile(r"\s*\([^)]*\)$")
-# A cost signal in an entry body: the word "cost" or a unit of time spent,
-# an outage/downtime, or a dollar figure. Used only when the repository opts in
-# via [index] require_cost (or --require-cost), so legacy repos backfill at
-# their own pace without inventing costs they did not record.
-COST_RE = re.compile(r"\b(cost|minute|hour|day|outage|downtime)\b|\$\d+", re.IGNORECASE)
+# A syntax heuristic, not proof of impact. Accept an explicit Cost: field,
+# "cost a ..." / "cost 35 ...", or time spent/lost with a quantity and unit.
+# Cost: unmeasured is intentional: never invent a number to satisfy a check.
+_QUANTITY = r"(?:\d+(?:\.\d+)?|a|an|one|two|three)"
+_DURATION = rf"{_QUANTITY}[ -](?:seconds?|minutes?|hours?|days?|weeks?)\b"
+COST_RE = re.compile(
+    rf"\bcost:\s*\S|\bcost(?:s)?\s+(?:{_QUANTITY}\b|\$\d+)"
+    rf"|\b(?:took|spent|lost|wasted|delayed(?:\s+by)?)\s+{_DURATION}"
+    rf"|\b{_DURATION}\s+(?:of\s+)?(?:investigation|detour|outage|downtime|rework|recovery|delay)\b",
+    re.IGNORECASE,
+)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 POSTMORTEM_REF_RE = re.compile(r"docs/postmortems/[\w.-]+\.md")
@@ -148,29 +154,30 @@ def unfenced_lines(text: str) -> Iterator[tuple[int, str]]:
 def domain_h3_re(gotchas: str) -> re.Pattern[str]:
     """Match a domain heading, capturing the literal path and the file name.
 
-    The path is anchored to the configured gotchas directory (regex-escaped), so
-    a heading that names a different directory is not recognised as a domain: it
-    routes nothing, and the contract reports the orphan file instead of silently
-    certifying a heading that points at a path that does not exist.
+    Match the routing target immediately after "read", never a later trigger
+    path. parse_index rejects every H3 that does not match this shape.
     """
-    return re.compile(rf"^### .*`({re.escape(gotchas)}/([\w.-]+\.md))`")
+    return re.compile(rf"^### [^`]*?\bread\s+`({re.escape(gotchas)}/([\w.-]+\.md))`(?=\s|$)")
 
 
 def trigger_clause_error(line: str) -> str | None:
     """Validate the "when touching ..." clause routes to something concrete.
 
     Returns an error message, or None when the clause is specific enough. A
-    clause is accepted when it names a backticked path/glob, or when it has at
-    least three words; "when touching stuff" and "when touching any file" route
-    nothing and are rejected. This is what makes check 2 mean something beyond
-    the mere presence of the words "when touching".
+    clause is accepted when it names a complete backticked path/glob, or when
+    it has at least three words. This is a syntax floor, not a semantic test
+    that the trigger will match the right tasks.
     """
     m = re.search(r"\bwhen touching\s+(.+)$", line)
     if not m:
         return ('domain heading has no "when touching ..." trigger clause; '
                 "an index nobody can match to a task routes nothing")
     clause = m.group(1)
-    if "`" in clause or len(clause.split()) >= 3:
+    tokens = re.findall(r"(?<!`)`([^`\s]+)`(?!`)", clause)
+    paths = [t for t in tokens if re.search(r"[\w]", t) and (
+        re.search(r"[/.*?\[\]]", t) or t in {"Dockerfile", "Makefile", "LICENSE"}
+    )]
+    if paths or len(re.findall(r"\b[\w]+(?:-[\w]+)*\b", clause)) >= 3:
         return None
     return (f"trigger clause is too vague to route a task: {clause!r} "
             "(name a backticked path/glob, or use at least three words)")
@@ -201,6 +208,7 @@ def parse_index(
         if line.startswith(heading):
             in_section = True
             found_section = True
+            current = None
             continue
         if in_section and SECTION_CLOSE_RE.match(line):
             in_section = False
@@ -216,6 +224,13 @@ def parse_index(
             if trigger_err:
                 errors.append(f"AGENTS.md:{lineno}: {trigger_err}")
             index.setdefault(current, [])
+            continue
+        if line.startswith("### "):
+            current = None
+            errors.append(
+                f"AGENTS.md:{lineno}: invalid domain heading; expected "
+                f"read `{gotchas}/<file>.md` when touching <triggers>"
+            )
             continue
         if line.startswith("- "):
             title = line[2:].strip()
@@ -332,7 +347,7 @@ def check(
                 if not COST_RE.search(body):
                     errors.append(
                         f"{rel}: entry has no stated cost: {title!r} "
-                        "(say what it cost — minutes, an outage, dollars)"
+                        "(use Cost: <impact>, cost a <consequence>, or took <quantity> <time unit>)"
                     )
 
     gdir = root / cfg.gotchas
@@ -365,6 +380,8 @@ def _check_skill(root: Path, skill_name: str, desc_max: int = SKILL_DESC_MAX_CHA
         errors.append(f"{rel}: frontmatter description is missing")
     elif BLOCK_SCALAR_RE.match(desc):
         errors.append(f"{rel}: frontmatter description must be a single line, not a YAML block scalar")
+    elif not desc.startswith(("'", '"')) and re.search(r":\s", desc):
+        errors.append(f"{rel}: quote the description: an unquoted colon followed by whitespace is invalid YAML")
     elif len(desc) > desc_max:
         errors.append(
             f"{rel}: frontmatter description is {len(desc)} chars; max {desc_max}"
@@ -520,6 +537,19 @@ _MUTATIONS: list[Mutation] = [
     ("vague-trigger",
      lambda r: _replace(r / "AGENTS.md", "when touching `infra/`", "when touching stuff"),
      "too vague"),
+    ("unmatched-trigger-backtick",
+     lambda r: _replace(r / "AGENTS.md", "when touching `infra/`", "when touching stuff`"),
+     "too vague"),
+    ("empty-trigger-token",
+     lambda r: _replace(r / "AGENTS.md", "when touching `infra/`", "when touching ``"),
+     "too vague"),
+    ("nonpath-trigger-token",
+     lambda r: _replace(r / "AGENTS.md", "when touching `infra/`", "when touching `stuff`"),
+     "too vague"),
+    ("stale-heading-after-valid-heading",
+     lambda r: _replace(r / "AGENTS.md", "- Second lesson",
+                        "### Stale — read `elsewhere/missing.md` when touching `infra/`\n- Second lesson"),
+     "invalid domain heading"),
     ("missing-section",
      lambda r: _replace(r / "AGENTS.md", "## Environment gotchas", "## Gotchas"),
      "trigger index"),
@@ -546,6 +576,9 @@ _MUTATIONS: list[Mutation] = [
                         "description: Distill a bug into a gotcha. Use after fixing anything non-trivial.",
                         "description: >\n  Distill a bug into a gotcha. Use after fixing anything non-trivial."),
      "single line"),
+    ("unquoted-description-colon",
+     lambda r: _replace(r / _SKILL_MD, "description: Distill", "description: Incident: Distill"),
+     "invalid YAML"),
     ("skill-copy-drift",
      _copy_skill_with_drift,
      "differs"),
@@ -602,6 +635,46 @@ def selftest() -> int:
         _replace(root / "AGENTS.md", "`docs/gotchas/infra.md`", "`lessons/infra.md`")
         if check(root, config=cfg):
             failures.append("configurable path: an honest lessons/ heading should pass")
+        _replace(root / "AGENTS.md", "- Second lesson",
+                 "### Stale — read `docs/gotchas/missing.md` when touching `infra/`\n- Second lesson")
+        parsed, errors = parse_index(read_text(root / "AGENTS.md"), gotchas="lessons")
+        if not any("invalid domain heading" in e for e in errors):
+            failures.append("configurable path: stale heading after valid heading was accepted")
+        if parsed.get("infra.md") != ["First lesson"]:
+            failures.append("configurable path: stale heading leaked bullets into previous domain")
+
+    for clause in ("`src/`", "`*.py`", "`gotcha.toml`", "`Dockerfile`", "cross-account IAM policies"):
+        if trigger_clause_error(f"### Infra — read `docs/gotchas/infra.md` when touching {clause}"):
+            failures.append(f"valid trigger rejected: {clause}")
+
+    # Exercise the whole entry check, including ordinary plurals and incidental
+    # time words. These samples are synthetic prose, not live system output.
+    cost_cases = [
+        ("Investigation took 35 minutes.", True),
+        ("Recovery took 2 hours.", True),
+        ("We lost one day.", True),
+        ("A 35-minute detour.", True),
+        ("Cost: $12 in wasted compute.", True),
+        ("Cost: unmeasured; prevented a failed deploy.", True),
+        ("Prefer blue buttons every day.", False),
+        ("Read whatever file is current that day.", False),
+        ("Rotate keys every 2 hours.", False),
+        ("Discuss cost optimization and outage handling.", False),
+        ("Cost:   ", False),
+    ]
+    for body, accepted in cost_cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _build_fixture(root)
+            path = root / GOTCHAS_DIR / "infra.md"
+            preamble = _FIXTURE_GOTCHA.split("## First lesson")[0]
+            path.write_text(preamble + "\n".join(
+                f"## {title}\n\n(2026-01-01): {body}\n"
+                for title in ("First lesson", "Second lesson", "Third lesson (staging only)")
+            ), encoding="utf-8")
+            errors = check(root, require_cost=True)
+            if (not errors) != accepted:
+                failures.append(f"cost form {body!r}: expected accepted={accepted}, got {errors!r}")
 
     for name, mutate, expected in _MUTATIONS:
         with tempfile.TemporaryDirectory() as tmp:

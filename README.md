@@ -3,14 +3,14 @@
 [![contract](https://github.com/jeanguirro/gotcha-distill/actions/workflows/contract.yml/badge.svg)](https://github.com/jeanguirro/gotcha-distill/actions/workflows/contract.yml)
 
 An agent skill and a contract that turn incidents into durable, always-indexed,
-lazily-loaded repository knowledge. **A fix is not done until its lesson is
-durable** — written where the next agent will find it, cheap enough to keep in
-context forever, and asserted by CI so it cannot drift.
+lazily-loaded repository knowledge. Record reusable lessons where the next
+agent can find them, and check that their index and domain files stay in sync.
 
 Ships one skill and one contract that any agent-standards tool can load from
 `.agents/skills/` (Codex, Cursor and OpenCode read it natively; Claude Code
-loads it through a `.claude/skills` bridge — see "Option C"). Stdlib Python,
-one shell script, no dependencies.
+loads it through a `.claude/skills` bridge — see "Option C"). Python 3.11+ and
+Bash; installed tools use only the Python standard library.
+The development YAML test uses PyYAML.
 
 ```
 fix the bug
@@ -21,12 +21,24 @@ fix the bug
                       └─ commit together        one commit: code + docs
 ```
 
+Try the structural checks in a local clone:
+
+```bash
+python3 scripts/assert-agent-workflow.py --selftest
+python3 scripts/assert-agent-workflow.py
+python3 scripts/gen-llms-txt.py --check
+```
+
+The [full validation commands](#proof-of-failure) include YAML loading and
+measurement tests. The [usage report](docs/metrics/2026-10-usage-impact.md)
+separates observed adoption from unmeasured agent outcomes.
+
 ## Why this exists
 
 Coding agents forget. Every session starts from the files on disk, and
 whatever a previous agent learned the hard way is gone unless it was written
 down somewhere the next agent will read. Three costs follow from that, and
-this pattern is built to eliminate each one.
+this pattern aims to reduce each one. Prevention and time saved are not yet measured.
 
 ### 1. Context burn
 
@@ -40,30 +52,29 @@ frequencies:
 | Level | Content | When loaded | Cost per lesson |
 |-------|---------|-------------|-----------------|
 | 1 | One bullet in `AGENTS.md` under a `### <Domain> — read <file> when touching <triggers>` heading | Every session, always | ~15 tokens (marginal; plus the fixed skill-description cost, see note) |
-| 2 | `SKILL.md` — how to write a lesson | Only when an agent has just fixed something | ~1,500 tokens, once per distillation |
+| 2 | `SKILL.md` — how to write a lesson | Only when an agent has just fixed something | Varies with the skill body; loaded once per distillation |
 | 3 | `docs/gotchas/<domain>.md` — the full entry | Only when the task touches that domain's trigger | ~150–300 tokens, only the relevant domain |
 
-One private repository of the author's — the `photos_backup` service — has run
-this pattern since its first incident. Measured on 2026-10-22: 81 asserted
-gotchas, a 5.4 KB always-loaded index, and 62 KB across its four domain files
-— about 66 bytes (~17 tokens) of always-loaded cost per lesson, and an ~11.5:1
-ratio between what every session pays and what a task actually reads. The
-agent knows *that* the hazards exist and *which file* to open for the domain it
-is about to touch. The `~15 tokens` above is the marginal cost of one more
-bullet; the skill's own `description` is a fixed ~200-character always-loaded
-cost on top of it, which is why the description is budgeted (see "The
-contract").
+The author's private `photos_backup` repository provides one measured snapshot
+(2026-10-22): **81 lessons, 5,263 bytes of trigger index, and 63,758 bytes
+across four domain files**. That is 5.3 KB / 63.8 KB in decimal units and a
+**12.1:1 domain-text-to-index ratio**, with about 65 index bytes per lesson.
+The ratio compares the index with *all* domain text; a task's actual cost
+depends on which domain files it loads. It is not a measured token saving.
+
+Token figures in the table are rough illustrations. The scanner estimates
+index tokens as bytes / 4; it does not run a tokenizer. Skill discovery
+metadata and domain headings add overhead. See the [measurement report](docs/metrics/2026-10-usage-impact.md)
+for the method, fleet results, and limitations.
 
 ### 2. Re-litigation
 
-An agent that does not know a question is settled will investigate it again.
-It will spend twenty tool calls and several thousand tokens rediscovering
-that Google strips GPS from certain downloads by design, or that a
-cross-account S3 403 usually means "missing", not "forbidden" — and it may
-reach a different, wrong conclusion this time.
+An agent that cannot find a prior investigation may repeat it and reach a
+different conclusion. An indexed lesson preserves the evidence and its scope
+so the next agent can check what is already known before investigating again.
 
 The index line carries the trigger; the entry carries the evidence; a
-`(do not re-investigate)` annotation on the line closes the question. The
+`(do not re-investigate)` annotation points to the prior investigation. The
 skill treats "I spent real time on something already settled" as a bug in
 the index itself: the lesson was missing or unfindable, and the fix is to
 make it findable.
@@ -82,7 +93,7 @@ lesson durable here:
 
 ## How it works
 
-The six steps, as the skill instructs the agent:
+The workflow (paths are configurable in `gotcha.toml`):
 
 1. **Classify.** Production incident → write
    `docs/postmortems/YYYY-MM-DD-<slug>.md` first. Everything else starts
@@ -96,7 +107,8 @@ The six steps, as the skill instructs the agent:
    for instance) against a real captured sample — and never paste that
    sample into the repo. Synthesize; assert on structure.
 5. **Run the contract:** `python3 scripts/assert-agent-workflow.py`.
-6. **Commit** the gotcha with the fix, in the same commit.
+6. **Deliver together.** Keep the gotcha and fix in the same eventual commit;
+   commit when authorized by the user’s workflow.
 
 The skill file is
 [`.agents/skills/gotcha-distill/SKILL.md`](.agents/skills/gotcha-distill/SKILL.md).
@@ -107,10 +119,10 @@ loader exactly when to pull the body into context.
 
 This incident is a synthesized composite, built to exercise every step of
 the loop; its numbers are internally consistent but it did not happen to a
-real system. The measurements earlier in this README (80 lessons, 5.3 KB
-always loaded, 11.5:1) are the opposite case: taken from a real production
-repository, which is private. Everything below nonetheless exists in this
-repository as real files, and the contract passes against them. The postmortem is
+real system. The measurements earlier in this README (81 lessons, 5,263 index
+bytes, 63,758 domain bytes, 12.1:1) come from a private production repository.
+The postmortem, lesson files, and index are
+included here; the deployment code snippets are illustrative. The postmortem is
 [`docs/postmortems/2026-09-14-cross-account-artifact-expiry.md`](docs/postmortems/2026-09-14-cross-account-artifact-expiry.md);
 the gotchas are in
 [`docs/gotchas/infra-aws.md`](docs/gotchas/infra-aws.md); the index is in
@@ -310,15 +322,15 @@ $ git show --stat HEAD
 
 ### What the next agent sees
 
-Nothing but the index line — fifteen tokens, every session. The next time a
-task touches `infra/` or a deploy workflow, the heading tells it to read
-`docs/gotchas/infra-aws.md` first, and it will not spend thirty-five minutes
-in IAM.
+The index carries a short lesson title and a domain trigger. When a task
+touches `infra/` or a deploy workflow, the heading directs the agent to
+`docs/gotchas/infra-aws.md`. Whether the agent follows that instruction and
+avoids repeating the investigation needs task-level evaluation.
 
 ## The contract
 
-`scripts/assert-agent-workflow.py` is stdlib Python (3.11+, for `tomllib`), 576 lines
-including its selftest, and asserts:
+`scripts/assert-agent-workflow.py` uses stdlib Python (3.11+, for `tomllib`)
+and checks:
 
 | # | Check | Direction |
 |---|-------|-----------|
@@ -331,17 +343,25 @@ including its selftest, and asserts:
 | 7 | No bullet appears in the section before the first domain heading | shape |
 | 8 | Every `docs/postmortems/<file>.md` cited in a domain file exists | file → disk |
 | 9 | Every entry carries a `YYYY-MM-DD` date (`--no-require-dates` while backfilling a legacy repo) | entry shape |
-| 10 | Every copy of `SKILL.md` has `name: gotcha-distill` (or `--skill-name`) and a single-line description ≤ 250 chars, and all copies are byte-identical | skill |
+| 10 | Every copy of `SKILL.md` has `name: gotcha-distill` (or `--skill-name`) and a single-line description within the configured budget (250 here; 512 by default), and all copies are byte-identical | skill |
 | 11 | Every domain file opens with `domain`/`triggers`/`updated` front matter | disk → generator |
-| 12 | Every entry states what it cost — only when the repo opts in via `[index] require_cost` (or `--require-cost`) | entry shape |
+| 12 | Every entry matches the documented cost syntax — opt-in via `[index] require_cost` (or `--require-cost`) | syntax heuristic |
 
-Check 2 is the one the whole design rests on: a heading whose trigger cannot
-match a real task is consistent, present, and never read — which is why the
-contract rejects both a missing clause and a trivial one (`when touching
-stuff`). Checks 9 and 12 are the mechanical halves of "gotchas are
-incident-born" — they cannot tell an incident from an opinion, but together
-they make writing an opinion require a deliberate lie rather than mere
-laziness.
+Check 2 requires a complete, nonempty backticked path/glob or at least three
+words. It rejects malformed routing headings, but cannot judge whether a
+trigger is relevant to a future task. Dates and cost checks likewise validate
+syntax, not the truth of an incident.
+
+When cost checking is enabled, use `Cost: <impact>` (including
+`Cost: unmeasured; <observed impact>`), `cost a <consequence>` or
+`cost <quantity> ...`, or time-spent forms such as `Investigation took 35 minutes.`
+and `Recovery took 2 hours.` Quantified consequences such as `a 35-minute detour`
+also pass. Incidental phrases such as `every day` do not. This is a prose
+heuristic; review still needs to establish the evidence.
+
+The installed contract uses a limited frontmatter reader, not a general YAML
+parser. This repository additionally parses the shipped skill with PyYAML in
+CI so syntactically invalid YAML cannot pass on the strength of that reader.
 
 An index line may carry a trailing `(annotation)` that the title does not —
 `(do not re-investigate)` is the common one. The exact form is tried first,
@@ -349,36 +369,32 @@ so a title that legitimately ends in a parenthetical (`(staging only)`,
 `(GKE 1.30+)`) compares literally. HTML comments and fenced code blocks are
 ignored, so `AGENTS.md` can carry an example heading without declaring a
 domain. Files may be CRLF or carry a UTF-8 BOM; the selftest covers both. The
-250-character description ceiling is a deliberate always-loaded budget, not a
-vendor limit: Claude Code budget-scales per-skill listing descriptions and
-truncates long ones in a busy multi-skill session (its hard ceiling for
-`description` + `when_to_use` is 1,536), so 250 keeps the whole description —
-trigger words included — intact.
+250-character description ceiling in this repository is a local context
+budget, not a vendor limit or a guarantee against truncation.
 
 The count in the index preamble ("81 gotchas") is deliberately **not**
 asserted. Counts drift harmlessly; parity does not. Asserting the count would
-make every distillation a two-file edit for no safety gain.
+add another manually maintained value without strengthening title parity.
 
 ### Proof of failure
 
-`--selftest` builds a synthetic repository in a temp directory (three times:
-LF, CRLF, and with a BOM), asserts the contract holds, then applies twenty
-named mutations — an index line with no entry, an entry with no index line,
-a deleted domain file, an orphan file, a duplicate on each side, a domain
-declared twice, a heading with no trigger clause, a heading with a trivial
-trigger clause, a bullet outside any domain, a removed section, missing front
-matter, a malformed front-matter date, a dangling postmortem link, an undated
-entry, a renamed skill, a bloated description, a folded description, a
-drifted skill copy, a missing skill — and asserts each one trips the expected
-check. It also proves the opt-in cost check and the configurable gotchas path
-the same way. A check that cannot be shown to fail is not a check.
+`--selftest` builds synthetic repositories, verifies clean LF/CRLF/BOM inputs,
+and applies 25 named mutations. It also checks configurable paths, a stale
+heading after a valid one, complete path/glob triggers, plural durations, and
+incidental time words. These checks cover known regressions, not every possible
+malformed document.
 
-```
-$ python3 scripts/assert-agent-workflow.py --selftest
-selftest OK (20 mutations each trip their check).
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 scripts/test-skill-frontmatter.py
+python3 scripts/test-measure-adoption.py
+python3 scripts/assert-agent-workflow.py --selftest
+python3 scripts/assert-agent-workflow.py
+python3 scripts/gen-llms-txt.py --check
 ```
 
-CI runs both. See [`.github/workflows/contract.yml`](.github/workflows/contract.yml).
+CI also exercises fresh, repeated, and copy-mode installation. See
+[`.github/workflows/contract.yml`](.github/workflows/contract.yml).
 
 ## Installation
 
@@ -393,7 +409,7 @@ miss one).
 ### Option B — install into an existing repository
 
 ```bash
-git clone https://github.com/<you>/gotcha-distill
+git clone https://github.com/jeanguirro/gotcha-distill
 bash gotcha-distill/scripts/install.sh /path/to/your/repo
 ```
 
@@ -480,7 +496,7 @@ postmortems = "docs/postmortems"
 
 [index]
 heading      = "## Environment gotchas"
-require_cost = true   # assert every entry states what it cost
+require_cost = true   # require cost syntax; impact still needs human review
 
 [skill]
 name                  = "gotcha-distill"
@@ -520,8 +536,8 @@ artifact buckets, or cross-account IAM`. The "when touching" clause is what
 routes a task to the file. An index line with no trigger is a line nobody
 loads.
 
-**The entry is one paragraph.** Bold restatement, date in parentheses, what
-it cost, the mechanism, the fix with file paths in backticks, the rule that
+**The entry is one paragraph.** Bold restatement, date in parentheses, measured
+cost or `Cost: unmeasured` with the observed impact, the mechanism, the fix with file paths in backticks, the rule that
 generalizes. No sub-headings, no nested lists. If it needs more than a
 paragraph, that is the postmortem's job — link to it.
 
@@ -529,8 +545,8 @@ paragraph, that is the postmortem's job — link to it.
 
 - Distill a style preference. The bar is "this cost production or a
   near-miss", not "I would have written it differently".
-- Re-litigate a `(do not re-investigate)` line. Extend it with new evidence
-  or leave it alone.
+- Repeat a prior investigation without reading its evidence. Update the
+  lesson when changed conditions or new evidence invalidate it.
 - Land the gotcha in a separate commit from the fix.
 - Paste live output into the entry. Synthesize; assert on structure.
 
@@ -549,7 +565,7 @@ them; those documents describe what *is*, not how it came to be.
 
 **Monorepo.** One domain file per package or service is usually right, still
 under `docs/gotchas/` at the repository root (`docs/gotchas/api.md`,
-`docs/gotchas/web.md`) — the contract's path is fixed — with the heading's
+`docs/gotchas/web.md`), or set `[paths] gotchas`, with the heading's
 trigger naming the package path. If a lesson spans packages, it belongs in
 the domain where the *fix* landed, with the other package named in the
 paragraph.
@@ -569,9 +585,8 @@ the existing location and cite that path from the gotcha entry; the
 contract's link check only requires that a cited `docs/postmortems/…` path
 resolves, and does not care whether other paths are cited alongside it.
 
-**Other always-loaded files.** The contract only knows about `AGENTS.md`.
-If your team's always-loaded file is named differently, symlink it — that is
-what `CLAUDE.md -> AGENTS.md` is for.
+**Other always-loaded files.** Set `[paths] contract` to the file your team
+loads, or use a symlink such as `CLAUDE.md -> AGENTS.md`.
 
 ## Background
 

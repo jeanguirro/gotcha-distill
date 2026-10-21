@@ -2,8 +2,12 @@
 
 This repository is the `gotcha-distill` skill and its contract — the
 reference implementation of the incident-to-lesson loop. Verify with
-`python3 scripts/assert-agent-workflow.py --selftest` and
-`python3 scripts/assert-agent-workflow.py`; there is no build or deploy step.
+`python3 scripts/assert-agent-workflow.py --selftest`,
+`python3 scripts/assert-agent-workflow.py`, and
+`python3 scripts/gen-llms-txt.py --check`. Shipped skill YAML is checked with
+`python3 scripts/test-skill-frontmatter.py` (install `requirements-dev.txt`).
+Fleet measurement changes also need `python3 scripts/test-measure-adoption.py`.
+There is no build or deploy step.
 
 This file is read by every coding agent at session start, regardless of
 vendor (Claude Code reads it via the `CLAUDE.md` symlink; Cursor, Codex and
@@ -15,8 +19,8 @@ with the code it describes.
 
 ## Agent rules (tool-neutral, postmortem-born)
 
-Each rule exists because it was violated and something broke. The cost is
-recorded in `docs/postmortems/`.
+The synthetic case study in `docs/postmortems/` illustrates these rules.
+Observed contract failures are recorded separately in `docs/gotchas/contract.md`.
 
 **1. Never copy live system output into committed source.**
 Log lines, API responses and error text may contain credentials, tokens,
@@ -39,7 +43,8 @@ never merged. The `gotcha-distill` skill is the procedure; the contract in
 
 ## Environment gotchas — trigger index (full text lazy-loaded in `docs/gotchas/`)
 
-2 gotchas, each earned by a production incident or near-miss. (The count is
+3 gotchas: two synthetic incident examples and one review-discovered parser
+failure. (The count is
 hand-kept; the index-line ↔ file parity below is ASSERTED by
 `scripts/assert-agent-workflow.py`.) The full stories live in
 `docs/gotchas/` — this index stays ALWAYS loaded so the hazards are known, and
@@ -50,6 +55,9 @@ load the `gotcha-distill` skill for the full procedure.
 ### Infra & AWS — read `docs/gotchas/infra-aws.md` when touching `infra/`, deploy workflows, artifact buckets, or cross-account IAM
 - Cross-account S3 answers 403 not 404 for a missing key
 - Never deploy from an artifact bucket you do not own
+
+### Contract validation — read `docs/gotchas/contract.md` when touching `scripts/`, skill frontmatter, or trigger index parsing
+- Reject malformed routing boundaries before assigning index bullets
 
 ## Documentation map
 

@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 3.11 is the declared floor (tomllib); 3.13 is current.
+        # Test the declared floor (tomllib) and a newer supported interpreter.
         python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -22,11 +22,19 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - name: validate shipped skill with a YAML loader
+        run: |
+          python3 -m pip install -r requirements-dev.txt
+          python3 scripts/test-skill-frontmatter.py
+
       - name: selftest (every mutation trips its check)
         run: python3 scripts/assert-agent-workflow.py --selftest
 
       - name: gotcha index <-> docs/gotchas parity
         run: python3 scripts/assert-agent-workflow.py
+
+      - name: configured fleet measurements and cost signals
+        run: python3 scripts/test-measure-adoption.py
 
       - name: llms.txt matches a fresh generation
         run: python3 scripts/gen-llms-txt.py --check

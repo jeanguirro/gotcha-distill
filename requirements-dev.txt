@@ -1,0 +1,2 @@
+# Only needed for the shipped YAML regression test; installed tools use stdlib.
+PyYAML==6.0.3

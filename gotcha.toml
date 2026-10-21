@@ -20,16 +20,11 @@ postmortems = "docs/postmortems"
 [index]
 # The H2 that opens the always-loaded trigger index inside `contract`.
 heading = "## Environment gotchas"
-# Assert every entry states what it cost (a mechanical half of "incident-born":
-# an entry that cannot name a cost is an opinion). Opt-in, so legacy repos can
-# backfill without inventing costs they never recorded.
+# Require recognizable cost syntax. This cannot verify impact; use
+# "Cost: unmeasured" with the observed consequence when quantities are unknown.
 require_cost = true
 
 [skill]
 name = "gotcha-distill"
-# Always visible in every session, so this is a ratchet rather than a vendor
-# limit. Claude Code budget-scales per-skill listing descriptions and truncates
-# long ones in a busy multi-skill session (its hard ceiling for description +
-# when_to_use is 1,536), so 250 keeps the whole description — trigger words
-# included — intact.
+# A local context budget, not a vendor limit or truncation guarantee.
 description_max_chars = 250

@@ -1,7 +1,7 @@
 ---
 domain: Infra & AWS
 triggers: infra/, deploy workflows, artifact buckets, cross-account IAM
-updated: 2026-09-22
+updated: 2026-10-22
 ---
 
 # Gotchas — infra & AWS (deploy pipeline, artifact buckets, cross-account IAM)
@@ -10,7 +10,8 @@ Read BEFORE touching `infra/`, deploy workflows, artifact buckets, or any
 cross-account IAM: S3 error semantics, artifact ownership, deploy ordering.
 
 Lazy-loaded gotcha file: `AGENTS.md` carries the one-line trigger index; the
-full stories live here. Every entry cost production or a near-miss. Add new
+full stories live here. These two entries illustrate a synthetic incident,
+not measured production outcomes. Add new
 gotchas here AND add their index line to `AGENTS.md` in the same commit.
 
 ## Cross-account S3 answers 403 not 404 for a missing key
@@ -36,7 +37,8 @@ gotchas here AND add their index line to `AGENTS.md` in the same commit.
 
 **A deploy that reads its artifact from another account's bucket inherits
   that account's lifecycle rules, and a lifecycle rule is a scheduled
-  deletion** (2026-09-14, same incident): `acme-build-artifacts` expired
+  deletion** (2026-09-14, same synthetic incident). Cost: unavailable rollback
+  artifacts and mismatched code/configuration. `acme-build-artifacts` expired
   `api/` objects after 30 days to control cost, so any release older than 30
   days became un-redeployable and un-rollbackable at once, and the failure
   arrived mid-deploy — `update-function-configuration` had already run when

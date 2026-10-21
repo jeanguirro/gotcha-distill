@@ -53,7 +53,7 @@ def anchor(title: str) -> str:
 
 def render(root: Path, cfg: contract.Config) -> str:
     index, errors = contract.parse_index(
-        contract.read_text(root / cfg.contract), cfg.heading
+        contract.read_text(root / cfg.contract), cfg.heading, cfg.gotchas
     )
     if errors:
         raise SystemExit(

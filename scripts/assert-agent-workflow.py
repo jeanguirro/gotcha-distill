@@ -6,7 +6,9 @@ docs/gotchas/ are lazy-loaded. This script asserts they cannot drift apart:
 
   1. AGENTS.md exists and carries a "## Environment gotchas" section.
   2. Every "### ... `docs/gotchas/<file>.md` ..." heading names a file that
-     exists AND carries a "when touching ..." trigger clause.
+     exists (under the configured gotchas directory, not just any path) AND
+     carries a "when touching ..." trigger clause specific enough to route a
+     task (a backticked path/glob, or at least three words).
   3. Every index bullet under a domain heading has an identical "## " title
      in that domain file. A bullet may carry a trailing "(annotation)" that
      the title does not; the exact form is tried first, then the stripped one.
@@ -23,6 +25,8 @@ docs/gotchas/ are lazy-loaded. This script asserts they cannot drift apart:
  11. Every domain file opens with front matter carrying `domain`, `triggers`
      and a YYYY-MM-DD `updated` date. scripts/gen-llms-txt.py reads it, so a
      missing header is a file the generated index cannot describe.
+ 12. Every entry states what it cost (only when the repository opts in via
+     `[index] require_cost = true` or `--require-cost`).
 
 Exit 0 when the contract holds, 1 with one line per violation otherwise.
 `--selftest` builds a synthetic fixture, asserts it is clean, then applies
@@ -49,9 +53,12 @@ from typing import Callable, Iterator
 
 SECTION_PREFIX = "## Environment gotchas"
 SECTION_CLOSE_RE = re.compile(r"^#{1,2} ")
-DOMAIN_H3_RE = re.compile(r"^### .*`docs/gotchas/([\w.-]+\.md)`")
-TRIGGER_RE = re.compile(r"\bwhen touching\s+\S")
 ANNOTATION_RE = re.compile(r"\s*\([^)]*\)$")
+# A cost signal in an entry body: the word "cost" or a unit of time spent,
+# an outage/downtime, or a dollar figure. Used only when the repository opts in
+# via [index] require_cost (or --require-cost), so legacy repos backfill at
+# their own pace without inventing costs they did not record.
+COST_RE = re.compile(r"\b(cost|minute|hour|day|outage|downtime)\b|\$\d+", re.IGNORECASE)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 POSTMORTEM_REF_RE = re.compile(r"docs/postmortems/[\w.-]+\.md")
@@ -80,6 +87,7 @@ class Config:
     heading: str = SECTION_PREFIX
     skill_name: str = SKILL_NAME
     description_max_chars: int = SKILL_DESC_MAX_CHARS
+    require_cost: bool = False  # assert every entry states what it cost
 
     @property
     def postmortem_ref_re(self) -> re.Pattern[str]:
@@ -104,6 +112,7 @@ def load_config(root: Path) -> Config:
         gotchas=paths.get("gotchas", base.gotchas),
         postmortems=paths.get("postmortems", base.postmortems),
         heading=index.get("heading", base.heading),
+        require_cost=index.get("require_cost", base.require_cost),
         skill_name=skill.get("name", base.skill_name),
         description_max_chars=skill.get("description_max_chars", base.description_max_chars),
     )
@@ -136,7 +145,42 @@ def unfenced_lines(text: str) -> Iterator[tuple[int, str]]:
             yield lineno, line
 
 
-def parse_index(text: str, heading: str = SECTION_PREFIX) -> tuple[dict[str, list[str]], list[str]]:
+def domain_h3_re(gotchas: str) -> re.Pattern[str]:
+    """Match a domain heading, capturing the literal path and the file name.
+
+    The path is anchored to the configured gotchas directory (regex-escaped), so
+    a heading that names a different directory is not recognised as a domain: it
+    routes nothing, and the contract reports the orphan file instead of silently
+    certifying a heading that points at a path that does not exist.
+    """
+    return re.compile(rf"^### .*`({re.escape(gotchas)}/([\w.-]+\.md))`")
+
+
+def trigger_clause_error(line: str) -> str | None:
+    """Validate the "when touching ..." clause routes to something concrete.
+
+    Returns an error message, or None when the clause is specific enough. A
+    clause is accepted when it names a backticked path/glob, or when it has at
+    least three words; "when touching stuff" and "when touching any file" route
+    nothing and are rejected. This is what makes check 2 mean something beyond
+    the mere presence of the words "when touching".
+    """
+    m = re.search(r"\bwhen touching\s+(.+)$", line)
+    if not m:
+        return ('domain heading has no "when touching ..." trigger clause; '
+                "an index nobody can match to a task routes nothing")
+    clause = m.group(1)
+    if "`" in clause or len(clause.split()) >= 3:
+        return None
+    return (f"trigger clause is too vague to route a task: {clause!r} "
+            "(name a backticked path/glob, or use at least three words)")
+
+
+def parse_index(
+    text: str,
+    heading: str = SECTION_PREFIX,
+    gotchas: str = "docs/gotchas",
+) -> tuple[dict[str, list[str]], list[str]]:
     """Return ({domain file: [raw bullet titles]}, errors) from AGENTS.md text.
 
     The section opens on a line starting with SECTION_PREFIX and closes at the
@@ -152,6 +196,7 @@ def parse_index(text: str, heading: str = SECTION_PREFIX) -> tuple[dict[str, lis
     current: str | None = None
 
     text = HTML_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    h3 = domain_h3_re(gotchas)
     for lineno, line in unfenced_lines(text):
         if line.startswith(heading):
             in_section = True
@@ -162,16 +207,14 @@ def parse_index(text: str, heading: str = SECTION_PREFIX) -> tuple[dict[str, lis
             current = None
         if not in_section:
             continue
-        m = DOMAIN_H3_RE.match(line)
+        m = h3.match(line)
         if m:
-            current = m.group(1)
+            current = m.group(2)
             if current in index:
-                errors.append(f"AGENTS.md:{lineno}: domain {GOTCHAS_DIR}/{current} is declared twice in the index")
-            if not TRIGGER_RE.search(line):
-                errors.append(
-                    f"AGENTS.md:{lineno}: domain heading for {GOTCHAS_DIR}/{current} has no "
-                    f'"when touching ..." trigger clause; an index nobody can match to a task routes nothing'
-                )
+                errors.append(f"AGENTS.md:{lineno}: domain {gotchas}/{current} is declared twice in the index")
+            trigger_err = trigger_clause_error(line)
+            if trigger_err:
+                errors.append(f"AGENTS.md:{lineno}: {trigger_err}")
             index.setdefault(current, [])
             continue
         if line.startswith("- "):
@@ -225,18 +268,21 @@ def check(
     *,
     require_dates: bool = True,
     skill_name: str | None = None,
+    require_cost: bool | None = None,
     config: Config | None = None,
 ) -> list[str]:
     cfg = config or Config()
     if skill_name is not None:
         cfg = Config(**{**cfg.__dict__, "skill_name": skill_name})
+    if require_cost is not None:
+        cfg = Config(**{**cfg.__dict__, "require_cost": require_cost})
     errors: list[str] = []
 
     agents_path = root / cfg.contract
     if not agents_path.is_file():
         return [f"{cfg.contract} must exist at the repository root (the canonical agent contract)"]
 
-    index, index_errors = parse_index(read_text(agents_path), cfg.heading)
+    index, index_errors = parse_index(read_text(agents_path), cfg.heading, cfg.gotchas)
     errors.extend(index_errors)
 
     for fname, bullets in index.items():
@@ -280,6 +326,14 @@ def check(
             for title, body in entries:
                 if not DATE_RE.search(body):
                     errors.append(f"{rel}: entry has no YYYY-MM-DD date: {title!r}")
+
+        if cfg.require_cost:
+            for title, body in entries:
+                if not COST_RE.search(body):
+                    errors.append(
+                        f"{rel}: entry has no stated cost: {title!r} "
+                        "(say what it cost — minutes, an outage, dollars)"
+                    )
 
     gdir = root / cfg.gotchas
     if gdir.is_dir():
@@ -463,6 +517,9 @@ _MUTATIONS: list[Mutation] = [
      lambda r: _replace(r / "AGENTS.md", "### Infra — read `docs/gotchas/infra.md` when touching `infra/`",
                         "### Infra — read `docs/gotchas/infra.md`"),
      "trigger clause"),
+    ("vague-trigger",
+     lambda r: _replace(r / "AGENTS.md", "when touching `infra/`", "when touching stuff"),
+     "too vague"),
     ("missing-section",
      lambda r: _replace(r / "AGENTS.md", "## Environment gotchas", "## Gotchas"),
      "trigger index"),
@@ -480,7 +537,7 @@ _MUTATIONS: list[Mutation] = [
      "no YYYY-MM-DD"),
     ("skill-name-mismatch",
      lambda r: _replace(r / _SKILL_MD, "name: gotcha-distill", "name: gotcha_distill_x"),
-     "name"),
+     "frontmatter name must be"),
     ("skill-desc-bloat",
      lambda r: _replace(r / _SKILL_MD, "non-trivial.", "non-trivial. " + "x" * SKILL_DESC_MAX_CHARS),
      "description"),
@@ -515,6 +572,36 @@ def selftest() -> int:
         _replace(root / GOTCHAS_DIR / "infra.md", "(2026-01-02)", "(long ago)")
         if check(root, require_dates=False):
             failures.append("--no-require-dates did not disable the date check")
+
+    # require_cost: a stated cost is asserted only when the repo opts in.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_fixture(root)
+        if not check(root, require_cost=True):
+            failures.append("require_cost=True did not flag a costless entry")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_fixture(root)
+        for old, new in (
+            ("(2026-01-01): body", "(2026-01-01): body, cost a 5-minute detour"),
+            ("(2026-01-02): body", "(2026-01-02): body, cost a 2-hour outage"),
+            ("(2026-01-03): a title", "(2026-01-03): cost a day of rework; a title"),
+        ):
+            _replace(root / GOTCHAS_DIR / "infra.md", old, new)
+        if check(root, require_cost=True):
+            failures.append("require_cost=True flagged entries that state a cost")
+
+    # configurable gotchas path: an honest heading passes, a lying one fails.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _build_fixture(root)
+        shutil.move(str(root / GOTCHAS_DIR), str(root / "lessons"))
+        cfg = Config(gotchas="lessons")
+        if not check(root, config=cfg):
+            failures.append("configurable path: a docs/gotchas heading should fail once gotchas=lessons")
+        _replace(root / "AGENTS.md", "`docs/gotchas/infra.md`", "`lessons/infra.md`")
+        if check(root, config=cfg):
+            failures.append("configurable path: an honest lessons/ heading should pass")
 
     for name, mutate, expected in _MUTATIONS:
         with tempfile.TemporaryDirectory() as tmp:
@@ -551,6 +638,8 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"override the skill directory name (default: {CONFIG_FILE} or {SKILL_NAME})")
     parser.add_argument("--no-require-dates", dest="require_dates", action="store_false",
                         help="do not require a YYYY-MM-DD date in every entry (for backfilling legacy repos)")
+    parser.add_argument("--require-cost", dest="require_cost", action="store_true", default=None,
+                        help="require every entry to state what it cost (overrides [index] require_cost)")
     parser.add_argument("--selftest", action="store_true",
                         help="run the fixture-mutation selftest instead of checking a repository")
     parser.add_argument("--quiet", action="store_true", help="print nothing on success")
@@ -561,7 +650,8 @@ def main(argv: list[str] | None = None) -> int:
 
     root = (args.root or find_root(Path.cwd())).resolve()
     cfg = load_config(root)
-    errors = check(root, require_dates=args.require_dates, skill_name=args.skill_name, config=cfg)
+    errors = check(root, require_dates=args.require_dates, skill_name=args.skill_name,
+                   require_cost=args.require_cost, config=cfg)
     if errors:
         print(f"agent-workflow contract VIOLATED ({len(errors)}):", file=sys.stderr)
         for e in errors:

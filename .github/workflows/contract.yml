@@ -39,19 +39,16 @@ jobs:
       - name: llms.txt matches a fresh generation
         run: python3 scripts/gen-llms-txt.py --check
 
-      - name: symlinks resolve in the working tree (not dereferenced to files)
+      - name: no symlinks are tracked (keeps the source archive symlink-free)
         run: |
-          # Assert the working tree, not `git ls-files -s`: the latter reads the
-          # index, so a `core.symlinks=false` checkout that dereferences the
-          # links into regular files would pass it. Only `test -L` catches that.
-          bad=0
-          for p in .claude/skills CLAUDE.md; do
-            if [ ! -L "$p" ]; then
-              echo "::error::$p is not a symlink in the working tree"
-              bad=1
-            fi
-          done
-          exit "$bad"
+          # A symlink ships as a symlink in the ZIP GitHub serves, and upload
+          # security scans reject archives that contain one ("Zip file contains
+          # a symbolic link"). Reject any tracked symlink (git mode 120000).
+          if git ls-files -s | awk '$1 == "120000"' | grep -q .; then
+            echo "::error::tracked symlinks found; replace them with real files"
+            git ls-files -s | awk '$1 == "120000" {print "  " $4}'
+            exit 1
+          fi
 
       - name: install.sh is idempotent into a fresh repo
         run: |
@@ -66,9 +63,9 @@ jobs:
           test "$snap" = "$(cd "$tmp" && find . -path ./.git -prune -o -type f -exec cksum {} + | sort)"
           (cd "$tmp" && python3 scripts/gen-llms-txt.py --check && python3 scripts/assert-agent-workflow.py)
 
-      - name: install.sh --copy produces identical copies the contract accepts
+      - name: install.sh wires multiple tools and the contract accepts them
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
-          bash scripts/install.sh "$tmp" --tools claude,cursor,opencode --copy
+          bash scripts/install.sh "$tmp" --tools claude,cursor,opencode
           (cd "$tmp" && python3 scripts/assert-agent-workflow.py)

@@ -413,29 +413,28 @@ git clone https://github.com/jeanguirro/gotcha-distill
 bash gotcha-distill/scripts/install.sh /path/to/your/repo
 ```
 
-`install.sh` copies the skill to `.agents/skills/gotcha-distill/`, the
-contract and `gen-llms-txt.py` to `scripts/`, and the two `README.md` files
-under `docs/`; writes a `gotcha.toml` (project name = the directory name; set
-it explicitly, since CI checkout names can differ) only if none exists; creates
-or appends the `## Environment gotchas` section in `AGENTS.md`; and bridges
-Claude Code to the canonical skill. It never overwrites an existing
-`gotcha.toml`, `docs/gotchas/` or `docs/postmortems/` file, and is safe to
-re-run. Afterwards, run `python3 scripts/gen-llms-txt.py` to generate
-`llms.txt` from your domain files' front matter, then the contract.
+`install.sh` copies the skill to `.agents/skills/gotcha-distill/` (and into
+`.claude/skills/` for Claude Code), the contract and `gen-llms-txt.py` to
+`scripts/`, and the two `README.md` files under `docs/`; writes a `gotcha.toml`
+(project name = the directory name; set it explicitly, since CI checkout names
+can differ) only if none exists; creates or appends the
+`## Environment gotchas` section in `AGENTS.md`; and writes a `CLAUDE.md` that
+imports `AGENTS.md`. It never creates symlinks — a symlink in a source archive
+trips upload security scans that reject them — and never overwrites an existing
+`gotcha.toml`, `docs/gotchas/` or `docs/postmortems/` file. Safe to re-run.
+Afterwards, run `python3 scripts/gen-llms-txt.py` to generate `llms.txt` from
+your domain files' front matter, then the contract.
 
 ```
-usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--copy] [--force]
+usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--force]
 ```
 
-- `--tools` selects which tool directories to bridge (default: `claude`,
-  the only tool that needs one — see the table below). Name `opencode` or
-  `cursor` only for versions that predate `.agents/skills` support.
-- `--copy` copies the skill into each tool directory instead of symlinking —
-  use it on Windows checkouts without `core.symlinks`, or if your tool's
-  skill loader does not follow symlinks. The contract asserts every copy is
-  byte-identical to the canonical one, so drift is caught.
+- `--tools` selects which tool directories to wire up (default: `claude`, the
+  only tool that needs a separate copy — see the table below). Name `opencode`
+  or `cursor` only for versions that predate `.agents/skills` support.
 - `--force` overwrites an existing skill directory, contract script and
-  `gen-llms-txt.py` (never `gotcha.toml` or the docs).
+  `gen-llms-txt.py` (never `gotcha.toml` or the docs). The contract asserts
+  every skill copy is byte-identical to the canonical one, so drift is caught.
 
 ### Option C — by hand
 
@@ -444,30 +443,28 @@ documentation (verified against Codex and Claude Code docs at the time of
 writing; Cursor and OpenCode follow the same agent-skills convention but are
 not exercised by this repository's CI):
 
-| Tool | Reads skills from | Needs a bridge? | Always-loaded contract |
-|------|-------------------|-----------------|------------------------|
-| Codex | `.agents/skills/` (follows symlinks) | No | `AGENTS.md` |
+| Tool | Reads skills from | Needs a copy? | Always-loaded contract |
+|------|-------------------|---------------|------------------------|
+| Codex | `.agents/skills/` | No | `AGENTS.md` |
 | Cursor | `.agents/skills/`, `.cursor/skills/`, `.claude/skills/` | No | `AGENTS.md` |
 | OpenCode | `.opencode/skills/`, `.claude/skills/`, `.agents/skills/` | No | `AGENTS.md` |
 | Claude Code | `.claude/skills/` only | **Yes** | `CLAUDE.md` |
 
 ```bash
 mkdir -p .agents/skills && cp -R gotcha-distill/.agents/skills/gotcha-distill .agents/skills/
+mkdir -p .claude/skills && cp -R .agents/skills/gotcha-distill .claude/skills/
 cp gotcha-distill/scripts/assert-agent-workflow.py scripts/
 
-ln -s ../.agents/skills .claude/skills
-ln -s AGENTS.md CLAUDE.md
+printf '@AGENTS.md\n' > CLAUDE.md
 ```
 
-Commit the symlinks as symlinks (git mode `120000`). The CI workflow in this
-repository asserts the working-tree entries are still symlinks (`test -L`), so
-a checkout that dereferenced them into regular files — e.g. one cloned with
-`core.symlinks=false` — fails the build. If your team already has a `CLAUDE.md`
-with content, keep it and add a line pointing at `AGENTS.md` instead of
-replacing it. Cursor has had reports of symlinked skill directories being
-filtered out when the resolved path escapes the project root; since Cursor
-reads `.agents/skills/` directly, do not add a `.cursor/skills` link at all —
-or use `--copy` if you must.
+Use real files, not symlinks: a symlink ships as a symlink in the ZIP GitHub
+serves, and upload security scans reject archives that contain one
+("Zip file contains a symbolic link"). `CLAUDE.md` is a plain file whose
+`@AGENTS.md` import pulls in the contract, so Claude Code loads the same
+content without a symlink. The CI workflow fails if any tracked symlink sneaks
+back in. If your team already has a `CLAUDE.md` with content, keep it and add
+a line pointing at `AGENTS.md` instead of replacing it.
 
 Then add the two contract commands to CI:
 
@@ -586,7 +583,8 @@ contract's link check only requires that a cited `docs/postmortems/…` path
 resolves, and does not care whether other paths are cited alongside it.
 
 **Other always-loaded files.** Set `[paths] contract` to the file your team
-loads, or use a symlink such as `CLAUDE.md -> AGENTS.md`.
+loads, or write a small file that imports it, e.g. `CLAUDE.md` containing
+`@AGENTS.md`.
 
 ## Background
 

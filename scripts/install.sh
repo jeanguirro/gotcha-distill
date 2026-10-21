@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # Install the gotcha-distill skill and its contract into an existing repository.
 #
-# usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--copy] [--force]
+# usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--force]
 #
 # The canonical copy lives in .agents/skills/, which Codex, Cursor and OpenCode
-# read natively. Only Claude Code needs a bridge (.claude/skills), so that is
-# the default; name the others only for tool versions that predate
-# .agents/skills support.
+# read natively. Claude Code reads .claude/skills/, so the skill is copied
+# there too. No symlinks are ever created: a symlink in a source archive trips
+# upload security scans that reject "Zip file contains a symbolic link".
 #
 #   --tools   comma-separated list of agent tools to wire up (default: claude)
-#   --copy    copy the skill into each tool directory instead of symlinking
-#             (for Windows checkouts or tools that do not follow symlinks)
 #   --force   overwrite an existing skill directory, contract script and
 #             llms.txt generator (gotcha.toml, docs/gotchas/ and
 #             docs/postmortems/ are never overwritten)
@@ -21,21 +19,19 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="gotcha-distill"
 TOOLS="claude"
-COPY=0
 FORCE=0
 TARGET=""
 
 usage() {
   cat <<'EOF'
-usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--copy] [--force]
+usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]] [--force]
 
 The canonical copy lives in .agents/skills/, which Codex, Cursor and OpenCode
-read natively. Only Claude Code needs a bridge (.claude/skills), so that is the
-default; name the others only for tool versions that predate .agents/skills.
+read natively. Claude Code reads .claude/skills/, so the skill is copied there
+too. No symlinks are ever created: a symlink in a source archive trips upload
+security scans that reject "Zip file contains a symbolic link".
 
   --tools   comma-separated list of agent tools to wire up (default: claude)
-  --copy    copy the skill into each tool directory instead of symlinking
-            (for Windows checkouts or tools that do not follow symlinks)
   --force   overwrite an existing skill directory, contract script and
             llms.txt generator (gotcha.toml, docs/gotchas/ and
             docs/postmortems/ are never overwritten)
@@ -48,7 +44,6 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --tools) TOOLS="$2"; shift 2 ;;
     --tools=*) TOOLS="${1#--tools=}"; shift ;;
-    --copy) COPY=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -180,62 +175,41 @@ EOF
 fi
 
 # ---- per-tool wiring -------------------------------------------------------
-link_or_copy() {
+copy_skill() {
   # $1 = tool dir relative to target (e.g. .claude/skills)
   local dir="$TARGET/$1"
-  if [ "$COPY" -eq 1 ]; then
-    if [ -e "$dir/$SKILL" ] && [ "$FORCE" -eq 0 ]; then
-      log exists "$1/$SKILL"
-    else
-      mkdir -p "$dir"
-      rm -rf "${dir:?}/${SKILL:?}"
-      cp -R "$TARGET/.agents/skills/$SKILL" "$dir/$SKILL"
-      log copied "$1/$SKILL"
-    fi
-    return
-  fi
-  if [ -L "$dir" ]; then
-    if [ "$(readlink "$dir")" = "../.agents/skills" ]; then
-      log exists "$1 -> ../.agents/skills"
-    else
-      log skipped "$1 is a symlink to $(readlink "$dir"); not touching it"
-    fi
-  elif [ -d "$dir" ]; then
-    if [ -e "$dir/$SKILL" ]; then
-      log exists "$1/$SKILL (real directory; merge manually or use --copy --force)"
-    else
-      ln -s "../../.agents/skills/$SKILL" "$dir/$SKILL"
-      log linked "$1/$SKILL -> ../../.agents/skills/$SKILL"
-    fi
+  if [ -e "$dir/$SKILL" ] && [ "$FORCE" -eq 0 ]; then
+    log exists "$1/$SKILL"
   else
-    mkdir -p "$(dirname "$dir")"
-    ln -s "../.agents/skills" "$dir"
-    log linked "$1 -> ../.agents/skills"
+    mkdir -p "$dir"
+    rm -rf "${dir:?}/${SKILL:?}"
+    cp -R "$TARGET/.agents/skills/$SKILL" "$dir/$SKILL"
+    log copied "$1/$SKILL"
   fi
 }
 
 IFS=',' read -r -a tool_list <<< "$TOOLS"
 for tool in "${tool_list[@]:-}"; do
   case "$tool" in
-    claude)   link_or_copy ".claude/skills" ;;
-    opencode) link_or_copy ".opencode/skills" ;;
-    cursor)   link_or_copy ".cursor/skills" ;;
+    claude)   copy_skill ".claude/skills" ;;
+    opencode) copy_skill ".opencode/skills" ;;
+    cursor)   copy_skill ".cursor/skills" ;;
     codex)    log native ".agents/skills is Codex's native location" ;;
     "") ;;
     *) echo "unknown tool: $tool (expected claude, opencode, cursor, codex)" >&2; exit 2 ;;
   esac
 done
 
-# ---- CLAUDE.md -> AGENTS.md (Claude Code reads CLAUDE.md, not AGENTS.md) ---
+# ---- CLAUDE.md -> AGENTS.md (Claude Code reads CLAUDE.md, not AGENTS.md) ----
+# A real file that imports AGENTS.md, never a symlink: symlinks in the source
+# archive trip upload security scans that reject them.
 case ",$TOOLS," in
   *,claude,*)
     if [ -e "$TARGET/CLAUDE.md" ] || [ -L "$TARGET/CLAUDE.md" ]; then
       log exists "CLAUDE.md (make sure it references AGENTS.md or its gotcha index)"
-    elif [ "$COPY" -eq 1 ]; then
-      log skipped "CLAUDE.md (--copy set; create it by hand, e.g. '@AGENTS.md')"
     else
-      ln -s AGENTS.md "$TARGET/CLAUDE.md"
-      log linked "CLAUDE.md -> AGENTS.md"
+      printf '@AGENTS.md\n' > "$TARGET/CLAUDE.md"
+      log created "CLAUDE.md (@AGENTS.md)"
     fi
     ;;
 esac

@@ -5,8 +5,8 @@
 #
 # The canonical copy lives in .agents/skills/, which Codex, Cursor and OpenCode
 # read natively. Claude Code reads .claude/skills/, so the skill is copied
-# there too. No symlinks are ever created: a symlink in a source archive trips
-# upload security scans that reject "Zip file contains a symbolic link".
+# there too. This installs repository tooling; Claude web uploads use the
+# separate archive built by scripts/build-skill-zip.py.
 #
 #   --tools   comma-separated list of agent tools to wire up (default: claude)
 #   --force   overwrite an existing skill directory, contract script and
@@ -28,8 +28,8 @@ usage: scripts/install.sh <target-repo> [--tools claude[,opencode,cursor,codex]]
 
 The canonical copy lives in .agents/skills/, which Codex, Cursor and OpenCode
 read natively. Claude Code reads .claude/skills/, so the skill is copied there
-too. No symlinks are ever created: a symlink in a source archive trips upload
-security scans that reject "Zip file contains a symbolic link".
+too. This installs repository tooling; Claude web uploads use the separate
+archive built by scripts/build-skill-zip.py.
 
   --tools   comma-separated list of agent tools to wire up (default: claude)
   --force   overwrite an existing skill directory, contract script and
@@ -201,8 +201,7 @@ for tool in "${tool_list[@]:-}"; do
 done
 
 # ---- CLAUDE.md -> AGENTS.md (Claude Code reads CLAUDE.md, not AGENTS.md) ----
-# A real file that imports AGENTS.md, never a symlink: symlinks in the source
-# archive trip upload security scans that reject them.
+# A real file that imports AGENTS.md, consistent with copy-based installation.
 case ",$TOOLS," in
   *,claude,*)
     if [ -e "$TARGET/CLAUDE.md" ] || [ -L "$TARGET/CLAUDE.md" ]; then

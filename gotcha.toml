@@ -27,4 +27,4 @@ require_cost = true
 [skill]
 name = "gotcha-distill"
 # A local context budget, not a vendor limit or truncation guarantee.
-description_max_chars = 250
+description_max_chars = 200

@@ -12,6 +12,11 @@ loads it through a `.claude/skills` bridge — see "Option C"). Python 3.11+ and
 Bash; installed tools use only the Python standard library.
 The development YAML test uses PyYAML.
 
+For **Claude web uploads**, build the dedicated `gotcha-distill.zip` as described
+under [Claude web installation](#claude-web--upload-one-skill).
+The v0.2.0 and v0.2.1 **Source code (zip)** downloads are unsuitable for that
+uploader; see the [release review](docs/postmortems/2026-10-22-claude-upload-packaging.md).
+
 ```
 fix the bug
   └─ postmortem (if it reached production)      docs/postmortems/YYYY-MM-DD-slug.md
@@ -343,7 +348,7 @@ and checks:
 | 7 | No bullet appears in the section before the first domain heading | shape |
 | 8 | Every `docs/postmortems/<file>.md` cited in a domain file exists | file → disk |
 | 9 | Every entry carries a `YYYY-MM-DD` date (`--no-require-dates` while backfilling a legacy repo) | entry shape |
-| 10 | Every copy of `SKILL.md` has `name: gotcha-distill` (or `--skill-name`) and a single-line description within the configured budget (250 here; 512 by default), and all copies are byte-identical | skill |
+| 10 | Every copy of `SKILL.md` has `name: gotcha-distill` (or `--skill-name`) and a single-line description within the configured budget (200 here; 512 by default), and all copies are byte-identical | skill |
 | 11 | Every domain file opens with `domain`/`triggers`/`updated` front matter | disk → generator |
 | 12 | Every entry matches the documented cost syntax — opt-in via `[index] require_cost` (or `--require-cost`) | syntax heuristic |
 
@@ -369,7 +374,7 @@ so a title that legitimately ends in a parenthetical (`(staging only)`,
 `(GKE 1.30+)`) compares literally. HTML comments and fenced code blocks are
 ignored, so `AGENTS.md` can carry an example heading without declaring a
 domain. Files may be CRLF or carry a UTF-8 BOM; the selftest covers both. The
-250-character description ceiling in this repository is a local context
+200-character description ceiling in this repository is a local context
 budget, not a vendor limit or a guarantee against truncation.
 
 The count in the index preamble ("81 gotchas") is deliberately **not**
@@ -388,15 +393,46 @@ malformed document.
 python3 -m pip install -r requirements-dev.txt
 python3 scripts/test-skill-frontmatter.py
 python3 scripts/test-measure-adoption.py
+python3 scripts/test-skill-package.py
 python3 scripts/assert-agent-workflow.py --selftest
 python3 scripts/assert-agent-workflow.py
 python3 scripts/gen-llms-txt.py --check
+python3 scripts/build-skill-zip.py
+python3 scripts/build-skill-zip.py --check dist/gotcha-distill.zip
 ```
 
-CI also exercises fresh, repeated, and copy-mode installation. See
+CI also exercises fresh, repeated, and multi-tool installation, and saves the
+validated upload ZIP as an Actions artifact. See
 [`.github/workflows/contract.yml`](.github/workflows/contract.yml).
 
 ## Installation
+
+### Claude web — upload one skill
+
+Build the upload package from a checkout:
+
+```bash
+python3 scripts/build-skill-zip.py
+python3 scripts/build-skill-zip.py --check dist/gotcha-distill.zip
+```
+
+Upload **`dist/gotcha-distill.zip`** through Claude's skill upload control. The
+ZIP contains `gotcha-distill/SKILL.md` and `gotcha-distill/LICENSE`, with one
+skill entrypoint, one top-level folder, and no symlinks. This follows
+[Anthropic's folder-packaging guidance](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills).
+When a release provides a named **gotcha-distill.zip** asset, use that asset.
+GitHub's automatic **Source code (zip)** contains the entire repository,
+including separate agent-discovery copies, and is unsuitable for this uploader.
+
+The package provides the procedure. To run its automated contract against a
+repository, install the tooling using Option B below and provide repository
+access. In chat without that access, the skill can draft a lesson and index
+changes from supplied evidence, with validation reported as pending.
+
+On 2026-10-22, the owner confirmed that the candidate uploaded successfully;
+the supplied screenshot shows the skill enabled with `SKILL.md` and `LICENSE`.
+Invocation behavior remains untested. The [release procedure](docs/releases.md)
+records the remaining smoke test and historical release corrections.
 
 ### Option A — use this repository as a template
 
@@ -419,8 +455,7 @@ bash gotcha-distill/scripts/install.sh /path/to/your/repo
 (project name = the directory name; set it explicitly, since CI checkout names
 can differ) only if none exists; creates or appends the
 `## Environment gotchas` section in `AGENTS.md`; and writes a `CLAUDE.md` that
-imports `AGENTS.md`. It never creates symlinks — a symlink in a source archive
-trips upload security scans that reject them — and never overwrites an existing
+imports `AGENTS.md`. It uses real file copies and never overwrites an existing
 `gotcha.toml`, `docs/gotchas/` or `docs/postmortems/` file. Safe to re-run.
 Afterwards, run `python3 scripts/gen-llms-txt.py` to generate `llms.txt` from
 your domain files' front matter, then the contract.
@@ -458,12 +493,11 @@ cp gotcha-distill/scripts/assert-agent-workflow.py scripts/
 printf '@AGENTS.md\n' > CLAUDE.md
 ```
 
-Use real files, not symlinks: a symlink ships as a symlink in the ZIP GitHub
-serves, and upload security scans reject archives that contain one
-("Zip file contains a symbolic link"). `CLAUDE.md` is a plain file whose
-`@AGENTS.md` import pulls in the contract, so Claude Code loads the same
+The installer uses real files for its agent-discovery copies. `CLAUDE.md` is
+a plain file whose `@AGENTS.md` import pulls in the contract, so Claude Code loads the same
 content without a symlink. The CI workflow fails if any tracked symlink sneaks
-back in. If your team already has a `CLAUDE.md` with content, keep it and add
+back in; the separate upload-package checks enforce the web artifact's layout.
+If your team already has a `CLAUDE.md` with content, keep it and add
 a line pointing at `AGENTS.md` instead of replacing it.
 
 Then add the two contract commands to CI:
@@ -497,7 +531,7 @@ require_cost = true   # require cost syntax; impact still needs human review
 
 [skill]
 name                  = "gotcha-distill"
-description_max_chars = 250
+description_max_chars = 200
 ```
 
 ## llms.txt

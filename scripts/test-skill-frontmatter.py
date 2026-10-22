@@ -21,7 +21,7 @@ class SkillFrontmatterTest(unittest.TestCase):
         self.assertIsInstance(meta["description"], str)
         self.assertTrue(meta["description"].strip())
         self.assertNotIn("\n", meta["description"])
-        self.assertLessEqual(len(meta["description"]), 250)
+        self.assertLessEqual(len(meta["description"]), 200)
 
 
 if __name__ == "__main__":

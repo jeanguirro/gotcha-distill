@@ -39,11 +39,16 @@ jobs:
       - name: llms.txt matches a fresh generation
         run: python3 scripts/gen-llms-txt.py --check
 
-      - name: no symlinks are tracked (keeps the source archive symlink-free)
+      - name: validate the Claude web upload package
         run: |
-          # A symlink ships as a symlink in the ZIP GitHub serves, and upload
-          # security scans reject archives that contain one ("Zip file contains
-          # a symbolic link"). Reject any tracked symlink (git mode 120000).
+          python3 scripts/test-skill-package.py
+          python3 scripts/build-skill-zip.py
+          python3 scripts/build-skill-zip.py --check dist/gotcha-distill.zip
+
+      - name: no symlinks are tracked
+        run: |
+          # Preserve the repository's copy-only distribution convention.
+          # Claude web uploads use the separate package validated above.
           if git ls-files -s | awk '$1 == "120000"' | grep -q .; then
             echo "::error::tracked symlinks found; replace them with real files"
             git ls-files -s | awk '$1 == "120000" {print "  " $4}'
@@ -69,3 +74,11 @@ jobs:
           tmp="$(mktemp -d)"
           bash scripts/install.sh "$tmp" --tools claude,cursor,opencode
           (cd "$tmp" && python3 scripts/assert-agent-workflow.py)
+
+      - name: save the validated upload ZIP for release preparation
+        if: matrix.python == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-skill-package
+          path: dist/gotcha-distill.zip
+          if-no-files-found: error

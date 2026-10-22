@@ -7,10 +7,13 @@ reference implementation of the incident-to-lesson loop. Verify with
 `python3 scripts/gen-llms-txt.py --check`. Shipped skill YAML is checked with
 `python3 scripts/test-skill-frontmatter.py` (install `requirements-dev.txt`).
 Fleet measurement changes also need `python3 scripts/test-measure-adoption.py`.
-There is no build or deploy step.
+Upload packaging: `python3 scripts/test-skill-package.py`, then
+`python3 scripts/build-skill-zip.py` and
+`python3 scripts/build-skill-zip.py --check dist/gotcha-distill.zip`.
+There is no application build or deploy step. See `docs/releases.md` for releases.
 
 This file is read by every coding agent at session start, regardless of
-vendor (Claude Code reads it via the `CLAUDE.md` symlink; Cursor, Codex and
+vendor (Claude Code reads it via the `CLAUDE.md` import; Cursor, Codex and
 OpenCode read `AGENTS.md` directly). It is the always-loaded layer. Keep it
 short; the full lessons live in `docs/gotchas/` and load lazily.
 
@@ -20,7 +23,8 @@ with the code it describes.
 ## Agent rules (tool-neutral, postmortem-born)
 
 The synthetic case study in `docs/postmortems/` illustrates these rules.
-Observed contract failures are recorded separately in `docs/gotchas/contract.md`.
+Observed failures are recorded in `docs/gotchas/contract.md` and
+`docs/gotchas/packaging.md`.
 
 **1. Never copy live system output into committed source.**
 Log lines, API responses and error text may contain credentials, tokens,
@@ -43,8 +47,8 @@ never merged. The `gotcha-distill` skill is the procedure; the contract in
 
 ## Environment gotchas — trigger index (full text lazy-loaded in `docs/gotchas/`)
 
-3 gotchas: two synthetic incident examples and one review-discovered parser
-failure. (The count is
+4 gotchas: two synthetic incident examples, one review-discovered parser
+failure, and one observed release-packaging failure. (The count is
 hand-kept; the index-line ↔ file parity below is ASSERTED by
 `scripts/assert-agent-workflow.py`.) The full stories live in
 `docs/gotchas/` — this index stays ALWAYS loaded so the hazards are known, and
@@ -58,6 +62,9 @@ load the `gotcha-distill` skill for the full procedure.
 
 ### Contract validation — read `docs/gotchas/contract.md` when touching `scripts/`, skill frontmatter, or trigger index parsing
 - Reject malformed routing boundaries before assigning index bullets
+
+### Skill packaging — read `docs/gotchas/packaging.md` when touching `scripts/build-skill-zip.py`, `.github/workflows/`, or release upload instructions
+- Validate the upload ZIP separately from the repository source archive
 
 ## Documentation map
 

@@ -1,6 +1,6 @@
 ---
 name: gotcha-distill
-description: "Distill a fixed bug, near-miss, or production incident: record the reusable lesson, add its trigger index, and check parity. Use when an investigation reveals a repository-specific hazard; skip routine edits and style preferences."
+description: "Distill a fixed bug, near-miss, or incident into a repository lesson, trigger index, and parity check. Use for repository-specific hazards; skip routine edits and style preferences."
 license: MIT
 metadata:
   audience: all agents
@@ -13,6 +13,12 @@ Turn an observed failure into a lesson a future agent can find before repeating
 it. Keep the always-loaded index short; load the relevant domain file when a
 task matches its trigger. The contract checks structure, not whether a lesson
 is true or whether another agent will use it.
+
+Paths and validation commands below belong to the target repository. The web
+upload contains this procedure and its license; install the repository tools
+separately for automated checks. If chat has no repository access or the tools
+are absent, draft the lesson and index changes from supplied evidence and
+report validation as pending. Do not claim files were changed or checks passed.
 
 ## Locate the lesson
 
